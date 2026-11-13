@@ -6,18 +6,21 @@ import { firebaseConfig } from "./firebase-config.js";
 const TOUS = ["encaissement","caisse","tresorerie","formation","pedagogie","secretaire"];
 /* Rôles qui voient tout en lecture (sans rien valider) */
 const LECTURE_TOTALE = ["vicepresident"];
+/* Le/la trésorier(e) tient aussi la caisse : le rôle « caisse » cumule les accès de la trésorerie */
+const mesRoles = r => r==="caisse" ? ["caisse","tresorerie"] : [r];
+const inclut = (l, r) => mesRoles(r).some(x=>l.includes(x));
 const ROLES = {
   president:{l:"Présidence", perms:["*"], partage:"Propriétaire"},
   vicepresident:{l:"Vice-présidence (lecture de tout)", perms:["fin.voir","tel.voir","peda.voir","tut.voir","export"], partage:"Lecteur"},
   secretaire:{l:"Secrétariat général", perms:["peda.voir","tut.voir","export"], partage:"Lecteur"},
-  encaissement:{l:"Responsable des encaissements", perms:["fin.voir","enc.saisir","enc.annuler","etu.gerer","tel.voir","depot.declarer","export"], partage:"Éditeur"},
-  caisse:{l:"Responsable de la caisse", perms:["fin.voir","depot.valider","op.saisir","export"], partage:"Éditeur"},
-  tresorerie:{l:"Trésorerie (contrôle)", perms:["fin.voir","tel.voir","export"], partage:"Éditeur"},
-  formation:{l:"Commission Formation (suivi des tuteurs)", perms:["peda.voir","peda.saisir","tut.voir","tut.suivre","export"], partage:"Éditeur"},
-  pedagogie:{l:"Formateur de l'Académie", perms:["peda.voir","peda.saisir"], partage:"Contributeur"},
+  encaissement:{l:"Responsable des encaissements", perms:["fin.voir","enc.saisir","enc.annuler","etu.gerer","tel.voir","depot.declarer","export","msg.fin"], partage:"Éditeur"},
+  caisse:{l:"Trésorier(e) · responsable de la caisse", perms:["fin.voir","depot.valider","op.saisir","tel.voir","export","msg.fin"], partage:"Éditeur"},
+  tresorerie:{l:"Trésorerie (ancien rôle, remplacé par Trésorier · caisse)", perms:["fin.voir","tel.voir","export"], partage:"Éditeur"},
+  formation:{l:"Commission Formation (suivi des tuteurs)", perms:["peda.voir","peda.saisir","tut.voir","tut.suivre","export","tel.voir","msg.peda"], partage:"Éditeur"},
+  pedagogie:{l:"Formateur de l'Académie", perms:["peda.voir","peda.saisir","tel.voir","msg.peda"], partage:"Contributeur"},
   tuteur:{l:"Tuteur", perms:["tut.saisir"], partage:"Contributeur"}
 };
-const SPECS_FORM = ["IAN-BD : Informatique et Sciences du Numérique – Bases de Données","IAN-RSI : Informatique et Sciences du Numérique – Réseaux et Sécurité Informatique","IAN-MMX : Informatique et Sciences du Numérique – Multimédia et Arts Numériques","HSN-COM : Humanités et Sciences Numériques – Communication Digitale","GEN-CMD : Gestion, Économie et Numérique – E-commerce et Marketing Digital","ADN-ATD : Administration et Droit du Numérique – E-Administration et Transformations","IAN-STG : Sciences Géospatiales (Géomatique)"];
+const SPECS_FORM = ["IAN-BD : Informatique et Sciences du Numérique – Bases de Données","IAN-RSI : Informatique et Sciences du Numérique – Réseaux et Sécurité Informatique","IAN-DAS : Informatique et Sciences du Numérique – Développement d'Applications et e-Services","IAN-MMX : Informatique et Sciences du Numérique – Multimédia et Arts Numériques","HSN-COM : Humanités et Sciences Numériques – Communication Digitale","GEN-CMD : Gestion, Économie et Numérique – E-commerce et Marketing Digital","ADN-ATD : Administration et Droit du Numérique – E-Administration et Transformations","IAN-STG : Sciences Géospatiales (Géomatique)"];
 const TYPES_ACT = ["Séance de tutorat académique","Révision de cours","Exercices et travaux pratiques","Assistance aux plateformes pédagogiques","Accompagnement individuel","Préparation aux évaluations","Atelier pratique"];
 const NATURES_DIF = ["Absences répétées","Difficultés de compréhension","Difficultés d’utilisation des plateformes pédagogiques","Manque de matériel ou de ressources","Problèmes de connexion","Faible motivation ou participation","Difficultés d’organisation du travail"];
 const PARTICIPATION = {1:"Faible",2:"Moyen",3:"Satisfaisant",4:"Très satisfaisant",5:"Excellent"};
@@ -225,7 +228,7 @@ const S = {
   loaded:{}, C:null, sub:{caisse:"synthese", pedagogie:"seances", admin:"comptes", etudiants:""},
   f:{q:"", niveau:"", situation:"", spec:""}, rf:{q:"", nature:"", mois:"", statut:"valides"},
   firstJournal:true,
-  consignes:[], evaluations:[], classements:[], cf:{statut:"", dest:""}, evalP:"", classP:"", rp:{type:"", mois:"", a:"", b:"", tut:""}
+  consignes:[], evaluations:[], messages:[], mf:{onglet:"attente", type:""}, classements:[], cf:{statut:"", dest:""}, evalP:"", classP:"", rp:{type:"", mois:"", a:"", b:"", tut:""}
 };
 const compte = () => S.moi;
 const role = () => compte()?.role || null;
@@ -247,6 +250,7 @@ async function write(fn, ok){
 async function log(action, texte, pour, extra){
   const canaux = new Set(["president", ...LECTURE_TOTALE]);
   if ((pour||[]).some(p=>["bureau","formation","pedagogie"].includes(p))) canaux.add("secretaire");
+  if ((pour||[]).includes("tresorerie")) canaux.add("caisse");
   for (const p of pour||[]){ if (p==="tous") TOUS.forEach(r=>canaux.add(r)); else if (String(p).startsWith("u:")) canaux.add("u_"+p.slice(2)); else if (ROLES[p]) canaux.add(p); }
   const id = "J" + Date.now().toString(36) + Math.random().toString(36).slice(2,6);
   const data = {le:nowISO(), par:S.uid, parNom:compte()?.nom||"", role:role(), action, texte, pour:[...canaux], ...(extra||{})};
@@ -276,11 +280,12 @@ function numero(col, prefixe, liste, champ, fabrique){
 }
 
 /* ======== Navigation ======== */
-const R = (...l) => () => l.includes(role()) || role()==="president";
-const RL = (...l) => () => l.includes(role()) || role()==="president" || LECTURE_TOTALE.includes(role());
+const R = (...l) => () => inclut(l, role()) || role()==="president";
+const RL = (...l) => () => inclut(l, role()) || role()==="president" || LECTURE_TOTALE.includes(role());
 const VIEWS = [
   {id:"accueil", l:"Tableau de bord", ok:()=>true},
   {id:"consignes", l:"Consignes", ok:()=>true},
+  {id:"messages", l:"WhatsApp étudiants", ok:()=>domainesMsg().length>0 || lectureTotale()},
   {id:"etudiants", l:"Étudiants", ok:RL("encaissement","tresorerie","secretaire")},
   {id:"registre", l:"Registre des encaissements", ok:RL("encaissement","tresorerie")},
   {id:"cotisations", l:"Suivi des cotisations", ok:RL("encaissement","tresorerie")},
@@ -305,7 +310,7 @@ function mesNotifs(){
   return S.journal.filter(j => j.par !== S.uid);
 }
 function nonLues(){ const seen = S.etat.vu || ""; return mesNotifs().filter(j => j.le > seen); }
-function mesAlertes(){ const r = role(); return (S.C?.alertes||[]).filter(a => r==="president" || LECTURE_TOTALE.includes(r) || a.pour.includes(r) || (r==="secretaire" && a.pour.includes("bureau"))); }
+function mesAlertes(){ const r = role(); return (S.C?.alertes||[]).filter(a => r==="president" || LECTURE_TOTALE.includes(r) || inclut(a.pour, r) || (r==="secretaire" && a.pour.includes("bureau"))); }
 function majBadge(){
   const n = nonLues().length + mesAlertes().filter(a=>a.niv==="bad").length + consignesNonLues();
   const b = $("#badge"); b.hidden = !n; b.textContent = n>99?"99+":n;
@@ -346,15 +351,15 @@ function render(){
   if (c.role==="tuteur"){ renderTuteur(main); majBadge(); return; }
   const v = view();
   const lab = x => x.id==="accueil" ? (c.role==="president" ? "Tableau général" : "Mon espace") : x.l;
-  const nb = x => x.id==="notifications" ? nonLues().length : x.id==="tutorat" && can("tut.suivre") ? S.T.nouveaux.length : x.id==="consignes" ? (lectureTotale() ? S.consignes.filter(k=>!["Faite","Annulée"].includes(k.statut) && k.echeance<today()).length : consignesNonLues()) : 0;
+  const nb = x => x.id==="notifications" ? nonLues().length : x.id==="tutorat" && can("tut.suivre") ? S.T.nouveaux.length : x.id==="messages" ? S.messages.filter(m=>m.statut==="À envoyer" && (lectureTotale() || domainesMsg().includes(m.domaine))).length : x.id==="consignes" ? (lectureTotale() ? S.consignes.filter(k=>!["Faite","Annulée"].includes(k.statut) && k.echeance<today()).length : consignesNonLues()) : 0;
   navigation(VIEWS.filter(x=>x.ok()).map(x=>({id:x.id, l:x.id==="consignes"&&!lectureTotale()?"Mes consignes":lab(x), n:nb(x)})), v, principauxDe(c.role));
   majBadge();
   if (v==="depots") S.sub.caisse = "depots";
-  main.innerHTML = (v==="accueil" ? blocConsignes() : "") + ({consignes:vConsignes, rapports:vRapports, evaluations:vEvaluations, classement:vClassement, accueil:vAccueil, etudiants:vEtudiants, registre:vRegistre, cotisations:vCotisations, caisse:vCaisse, depots:vCaisse, pedagogie:vPedagogie, tutorat:vTutorat, notifications:vNotifs, admin:vAdmin, compte:vCompte}[v])();
+  main.innerHTML = (v==="accueil" ? blocConsignes() : "") + ({messages:vMessages, consignes:vConsignes, rapports:vRapports, evaluations:vEvaluations, classement:vClassement, accueil:vAccueil, etudiants:vEtudiants, registre:vRegistre, cotisations:vCotisations, caisse:vCaisse, depots:vCaisse, pedagogie:vPedagogie, tutorat:vTutorat, notifications:vNotifs, admin:vAdmin, compte:vCompte}[v])();
   bind(v==="depots" ? "caisse" : v);
   if (v==="compte") bindCompte();
   if (v==="notifications") marquerLu();
-  ({consignes:bindConsignes, rapports:bindRapports, evaluations:bindEvaluations, classement:bindClassement}[v]||(()=>{}))();
+  ({messages:bindMessages, consignes:bindConsignes, rapports:bindRapports, evaluations:bindEvaluations, classement:bindClassement}[v]||(()=>{}))();
   $("#main").querySelectorAll("[data-cons]").forEach(b => b.onclick = () => ficheConsigne(b.dataset.cons));
 }
 function espace(tut){
@@ -626,8 +631,11 @@ function ficheEtu(mat){
     </div>`:""}
     ${can("peda.voir")||can("*")?`<div class="card"><h3>Suivi pédagogique</h3><p class="small">Assiduité globale : <b>${pct(p.assiduite)}</b> (${p.pres}/${p.total} séances)</p>
       ${Object.keys(p.par).length?`<div class="tablewrap"><table><thead><tr><th>Formation</th><th class="r">Assiduité</th><th class="r">Note</th><th>Résultat</th></tr></thead><tbody>${Object.entries(p.par).map(([c,f])=>`<tr><td>${esc(c)} · <span class="small">${esc(nomForm(c))}</span></td><td class="r">${pct(f.assiduite)}</td><td class="r">${f.note==null?"—":esc(f.note)}</td><td>${f.valide==null?'<span class="pill mute">En cours</span>':f.valide?'<span class="pill ok">Validée</span>':'<span class="pill bad">Non validée</span>'}</td></tr>`).join("")}</tbody></table></div>`:`<div class="empty">Aucune séance ni note pour l'instant.</div>`}</div>`:""}
+    ${histoMessages(mat)}
     <div class="row">${can("enc.saisir")?`<button class="btn primary" id="fEnc">+ Encaissement</button>`:""}${can("etu.gerer")?`<button class="btn" id="fEdit">Modifier la fiche</button>`:""}${wa&&fin&&(e.arriere||e.resteCourant||!e.inscOk)?`<a class="btn vert" href="${wa}" target="_blank" rel="noopener">Relancer sur WhatsApp</a>`:""}<button class="btn" id="fPdf">PDF</button><button class="btn" data-close>Fermer</button></div>`);
   $("#fPdf").onclick = () => rptEtudiant(mat);
+  $("#fMsg") && ($("#fMsg").onclick = () => formMessage(mat));
+  $("#sheet").querySelectorAll("[data-fmenv]").forEach(b => b.onclick = () => { envoyerMsg(S.messages.find(x=>x.id===b.dataset.fmenv)); closeSheet(); });
   $("#fEnc") && ($("#fEnc").onclick = () => formEnc(mat));
   $("#fEdit") && ($("#fEdit").onclick = () => formEtu(mat));
 }
@@ -752,7 +760,12 @@ function formEnc(matInit){
     const ok = await write(async () => {
       id = await numero("encaissements", "ENC-", S.encaissements, "num", id => ({num:id, date:$("#n_d").value, matricule:m||"", nom:s?.nom||"", payeur:m?"":payeur, niveau:s?.niveau||"", nature:na, mois:mo, montant, mode:$("#n_md").value, ref, encaissePar:$("#n_by").value, statut:"Valide", obs:$("#n_ob").value.trim(), saisiPar:S.uid, saisiLe:nowISO()}));
     }, "Encaissement enregistré");
-    if (ok){ log("encaissement", `${id} · ${FC(montant)} · ${na} · ${s?.nom||payeur}`, ["president","tresorerie"], {montant}); closeSheet(); }
+    if (ok){
+      log("encaissement", `${id} · ${FC(montant)} · ${na} · ${s?.nom||payeur}`, ["president","tresorerie"], {montant}); closeSheet();
+      if (m){ const [msg] = await preparerMessages("recu", [{matricule:m, ref:id}]);
+        if (msg) openSheet(`<h2>Encaissement ${esc(id)} enregistré</h2><p>Envoyer la confirmation de paiement à <b>${esc(s.nom)}</b> sur WhatsApp ?</p>${telDe(m)?"":'<div class="banner">Pas de numéro enregistré pour cet étudiant : le message reste dans « WhatsApp étudiants ».</div>'}
+          <div class="row">${telDe(m)?'<button class="btn vert" id="rcOk">Envoyer maintenant</button>':""}<button class="btn" data-close>Plus tard</button></div>`), $("#rcOk") && ($("#rcOk").onclick = () => { envoyerMsg(msg); closeSheet(); }); }
+    }
   };
 }
 function annulerEnc(num){
@@ -793,7 +806,7 @@ function vCotisations(){
 
 /* ---- Caisse ---- */
 function vCaisse(){
-  const C = S.C, K = C.caisse, enc = role()==="encaissement", reg = ["president","tresorerie",...LECTURE_TOTALE].includes(role());
+  const C = S.C, K = C.caisse, enc = role()==="encaissement", reg = ["president","tresorerie","caisse",...LECTURE_TOTALE].includes(role());
   const sub = enc ? "depots" : S.sub.caisse;
   const tabs = enc ? [] : [["synthese","Synthèse"],["depots","Dépôts des encaissements"],["operations","Entrées et sorties"],["livre","Livre de caisse"]];
   let body = "";
@@ -989,13 +1002,18 @@ function formSeance(id){
     if (!Object.keys(presences).length){ toast("Pointez au moins un apprenant."); return; }
     const data = {date:$("#s_d").value, formation:$("#s_f").value, presences, par:S.uid, parNom:compte().nom, majLe:nowISO()};
     const ref = id ? S.db.doc("seances/"+id) : S.db.collection("seances").doc();
-    if (await write(()=>ref.set(data), "Présences enregistrées")){ const v=Object.values(presences); log("seance", `Séance ${data.formation} du ${dFR(data.date)} : ${v.filter(x=>x==="P"||x==="R").length}/${v.length} présents`, ["president","bureau"]); closeSheet(); }
+    if (await write(()=>ref.set(data), "Présences enregistrées")){ const v=Object.values(presences); log("seance", `Séance ${data.formation} du ${dFR(data.date)} : ${v.filter(x=>x==="P"||x==="R").length}/${v.length} présents`, ["president","bureau"]);
+      const abs = Object.entries(presences).filter(([,x])=>x==="A").map(([k])=>({matricule:k, ref:ref.id}));
+      if (abs.length) preparerMessages("absence", abs).then(L => L.length && toast(`${L.length} message(s) d'absence préparé(s) dans « WhatsApp étudiants »`)); closeSheet(); }
   };
 }
 async function saveNotes(code){
   const cur = {...(S.notes.find(n=>n.id===code)?.notes||{})}; let bad = 0;
   document.querySelectorAll(".noteIn").forEach(i => { const raw = i.value.trim().toUpperCase().replace(",","."); if (raw===""){ delete cur[i.dataset.mat]; return; } if (raw==="ABS"){ cur[i.dataset.mat]="ABS"; return; } const n = Number(raw); if (isNaN(n)||n<0||n>20){ bad++; i.style.borderColor="var(--bad)"; return; } cur[i.dataset.mat] = n; });
   if (bad){ toast(`${bad} note(s) invalide(s) : saisissez un nombre entre 0 et 20 ou ABS.`); return; }
+  const avant = S.notes.find(n=>n.id===code)?.notes || {};
+  const changes = Object.entries(cur).filter(([k,v])=>String(avant[k])!==String(v)).map(([k,v])=>({matricule:k, ref:`${code}|${v}`}));
+  if (changes.length) setTimeout(() => preparerMessages("note", changes).then(L => L.length && toast(`${L.length} message(s) de note préparé(s) dans « WhatsApp étudiants »`)), 800);
   if (await write(()=>S.db.doc("notes/"+code).set({notes:cur, majLe:nowISO(), par:S.uid}), "Notes enregistrées")) log("notes", `Notes ${code} mises à jour (${Object.keys(cur).length} apprenants)`, ["president"]);
 }
 
@@ -1208,8 +1226,8 @@ function vAdmin(){
       <tr><td>Vice-présidence</td><td class="small">Tout en lecture (finances, téléphones, pédagogie, tutorat, consignes, évaluations), sans rien valider ni administrer</td></tr>
       <tr><td>Secrétariat général</td><td class="small">Membres sans montants ni téléphones, présences et notes, rapports des tuteurs en lecture, classement</td></tr>
       <tr><td>Responsable des encaissements</td><td class="small">Étudiants (avec téléphones), registre, cotisations, ses dépôts à la caisse</td></tr>
-      <tr><td>Responsable de la caisse</td><td class="small">Caisse : dépôts à valider, entrées et sorties, livre de caisse</td></tr>
-      <tr><td>Trésorerie (contrôle)</td><td class="small">Lecture du registre, des cotisations et de la caisse, rapprochement</td></tr>
+      <tr><td>Trésorier(e) · responsable de la caisse</td><td class="small">Caisse (dépôts à valider, entrées et sorties, livre de caisse), registre et cotisations, téléphones, messages WhatsApp de paiement</td></tr>
+      
       <tr><td>Commission Formation</td><td class="small">Rapports des tuteurs (lecture, réponse), présences et notes de l'Académie</td></tr>
       <tr><td>Formateur de l'Académie</td><td class="small">Présences et notes de l'Académie</td></tr>
       <tr><td>Tuteur</td><td class="small">Espace Tuteurs : ses propres rapports, ses consignes et le classement</td></tr>
@@ -1221,8 +1239,8 @@ function vAdmin(){
       <p class="small">Choisissez le fichier <b>donnees-initiales-cvpb.json</b> fourni avec l'application (étudiants, téléphones, encaissements, dépôts, sorties, paramètres, rapports de tutorat). À faire une seule fois, juste après la première installation.</p>
       <p class="small muted">Ce fichier contient des données personnelles : ne le publiez jamais sur internet et supprimez-le du téléphone ou de l'ordinateur après l'import.</p>
       <input type="file" id="impF" accept=".json,application/json">
-      <p class="small" id="impInfo"></p>
-      <div class="row"><button class="btn primary" id="impOk" disabled>Importer</button></div></div>`;
+      <p class="small" id="impInfo">${esc(S.imp?.info||"")}</p>
+      <div class="row"><button class="btn primary" id="impOk" ${S.imp?.J && !S.imp?.busy ? "" : "disabled"}>${S.imp?.busy?"Import en cours…":"Importer"}</button></div></div>`;
   }
   if (sub==="parametres"){
     const p = P(), s = p.seuils;
@@ -1262,7 +1280,7 @@ function formCompte(uid){
   openSheet(`<h2>${isNew?"Ajouter une personne":"Modifier "+esc(c.nom)}</h2>
     <label class="f" for="c_n">Nom et prénoms<input type="text" id="c_n" value="${esc(c.nom)}" maxlength="80"></label>
     ${isNew?`<label class="f" for="c_em">Adresse Google UVCI<input type="email" id="c_em" autocapitalize="none" spellcheck="false" maxlength="80" placeholder="prenom.nom@${esc(DOMAINE())}"><span class="hint">L'adresse exacte avec laquelle la personne se connecte à l'UVCI.</span></label>`:`<p class="small">Compte : <b class="num" style="overflow-wrap:anywhere">${esc(uid)}</b></p>`}
-    <label class="f" for="c_r">Rôle<select id="c_r">${opts(Object.entries(ROLES).filter(([k])=>k!=="president").map(([k,r])=>[k,r.l]), c.role)}</select></label>
+    <label class="f" for="c_r">Rôle<select id="c_r">${opts(Object.entries(ROLES).filter(([k])=>k!=="president" && (k!=="tresorerie" || c.role==="tresorerie")).map(([k,r])=>[k,r.l]), c.role)}</select></label>
     <div class="g2" id="c_tw"><label class="f" for="c_sp">Spécialité encadrée<select id="c_sp">${opts(SPECS_FORM, c.specialite, "—")}</select></label><label class="f" for="c_nv">Niveau encadré<select id="c_nv">${opts(["Licence 1","Licence 2","Licence 3"], c.niveau)}</select></label></div>
     ${isNew?"":`<label class="row small"><input type="checkbox" id="c_a" ${c.actif!==false?"checked":""}> Accès actif (décocher pour bloquer immédiatement ce compte)</label>`}
     <p class="small" id="c_err" style="color:var(--bad)" role="alert"></p>
@@ -1371,9 +1389,16 @@ function bind(v){
   if (v==="admin"){
     on("#newCpt","onclick",()=>formCompte());
     main.querySelectorAll("[data-cpt]").forEach(b=>b.onclick=()=>formCompte(b.dataset.cpt));
-    if ($("#impF")){ let J = null;
-      $("#impF").onchange = async e => { try { J = JSON.parse(await e.target.files[0].text()); const n = k => Object.keys(J[k]||{}).length; $("#impInfo").textContent = `${n("etudiants")} étudiants, ${n("encaissements")} encaissements, ${n("depots")} dépôts, ${n("operations")} opérations, ${Object.values(J.rapports_tuteurs||{}).reduce((a,d)=>a+Object.keys(d.rapports||{}).length,0)} rapports de tutorat.${S.etudiants.length?" Attention : des données existent déjà ; les fiches de même numéro seront remplacées.":""}`; $("#impOk").disabled = false; } catch(err){ J = null; $("#impInfo").textContent = "Fichier illisible : choisissez donnees-initiales-cvpb.json."; } };
-      $("#impOk").onclick = async () => { if (!J) return; $("#impOk").disabled = true; $("#impInfo").textContent = "Import en cours…"; try { const n = await importer(J); $("#impInfo").textContent = `Import terminé : ${n} fiches enregistrées. Vous pouvez supprimer le fichier.`; log("import", `Données initiales importées (${n} fiches)`, ["tous"]); } catch(err){ $("#impInfo").textContent = "Import interrompu : vérifiez la connexion et réessayez."; $("#impOk").disabled = false; } };
+    /* L'état de l'import est gardé dans S.imp : l'écran se redessine à chaque mise à jour en direct */
+    if ($("#impF")){
+      const info = t => { S.imp.info = t; const el = $("#impInfo"); if (el) el.textContent = t; };
+      S.imp = S.imp || {J:null, info:"", busy:false};
+      $("#impF").onchange = async e => { try { const J = JSON.parse(await e.target.files[0].text()); S.imp.J = J; const n = k => Object.keys(J[k]||{}).length; info(`Fichier prêt : ${n("etudiants")} étudiants, ${n("encaissements")} encaissements, ${n("depots")} dépôts, ${n("operations")} opérations, ${Object.values(J.rapports_tuteurs||{}).reduce((a,d)=>a+Object.keys(d.rapports||{}).length,0)} rapports de tutorat.${S.etudiants.length?" Des données existent déjà : les fiches de même numéro seront remplacées.":""} Cliquez sur « Importer ».`); const b = $("#impOk"); if (b) b.disabled = false; } catch(err){ S.imp.J = null; info("Fichier illisible : choisissez donnees-initiales-cvpb.json."); } };
+      $("#impOk").onclick = async () => {
+        if (!S.imp.J || S.imp.busy) return; S.imp.busy = true; info("Import en cours… ne fermez pas la page."); const b = $("#impOk"); if (b){ b.disabled = true; b.textContent = "Import en cours…"; }
+        try { const n = await importer(S.imp.J); S.imp = {J:null, busy:false, info:`Import terminé : ${n} fiches enregistrées. Supprimez maintenant le fichier de l'ordinateur.`}; toast("Import terminé"); log("import", `Données initiales importées (${n} fiches)`, ["tous"]); render(); }
+        catch(err){ S.imp.busy = false; info(err?.code==="invalid_argument" ? "Import refusé par les règles de sécurité : publiez les dernières règles dans Firebase, puis réessayez." : "Import interrompu : vérifiez la connexion et réessayez."); render(); }
+      };
     }
     main.querySelectorAll("[data-copy]").forEach(b=>b.onclick=async()=>{ try{ await navigator.clipboard.writeText(b.dataset.copy); toast("Lien copié"); }catch(e){ toast("Copie impossible : sélectionnez le lien à la main."); } });
     on("#pf","onsubmit",e=>{e.preventDefault();saveParams();});
@@ -1403,6 +1428,7 @@ const ICO = (() => {
     admin: s('<circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"/>'),
     compte: s('<circle cx="12" cy="8" r="4"/><path d="M4 21c1-4 4-6 8-6s7 2 8 6"/>'),
     nouveau: s('<path d="M12 5v14M5 12h14"/>'),
+    messages: s('<path d="M20.5 11.6a8.4 8.4 0 0 1-12.4 7.4L3.5 20.5l1.6-4.4a8.4 8.4 0 1 1 15.4-4.5z"/><path d="M9 9.5c.3 2 2.2 4.2 5.2 5l1-1.2-1.6-1-.8.6c-.9-.4-1.8-1.3-2.2-2.2l.6-.8-1-1.6z"/>'),
     menu: s('<rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="3" width="7" height="7" rx="1.5"/><rect x="3" y="14" width="7" height="7" rx="1.5"/><rect x="14" y="14" width="7" height="7" rx="1.5"/>')
   };
 })();
@@ -1414,7 +1440,7 @@ function navigation(items, courant, principaux){
   $("#tabs").innerHTML = items.map(x=>`<a href="#${x.id}" ${x.id===courant?'aria-current="page"':""}>${esc(x.l)}${x.n?` (${x.n})`:""}</a>`).join("");
   const bn = $("#bnav"); bn.hidden = false;
   const pr = principaux.map(id=>items.find(x=>x.id===id)).filter(Boolean).slice(0,4);
-  const court = l => ({"Tableau de bord":"Accueil","Tableau général":"Accueil","Mon espace":"Accueil","Mon tableau de bord":"Accueil","Alertes et notifications":"Alertes","Notifications":"Alertes","Registre des encaissements":"Registre","Suivi des cotisations":"Cotisations","Suivi pédagogique":"Pédagogie","Rapports des tuteurs":"Tutorat","Mes consignes":"Consignes","Nouveau rapport":"Rapport","Mes rapports":"Rapports","Mes dépôts à la caisse":"Dépôts"}[l] || l);
+  const court = l => ({"Tableau de bord":"Accueil","Tableau général":"Accueil","Mon espace":"Accueil","Mon tableau de bord":"Accueil","Alertes et notifications":"Alertes","Notifications":"Alertes","Registre des encaissements":"Registre","Suivi des cotisations":"Cotisations","Suivi pédagogique":"Pédagogie","Rapports des tuteurs":"Tutorat","Mes consignes":"Consignes","Nouveau rapport":"Rapport","Mes rapports":"Rapports","Mes dépôts à la caisse":"Dépôts","WhatsApp étudiants":"WhatsApp"}[l] || l);
   bn.innerHTML = pr.map(x=>`<a href="#${x.id}" ${x.id===courant?'aria-current="page"':""}>${icoDe(x.id)}<span>${esc(court(x.l))}</span>${x.n?`<b class="nb">${x.n>99?"99+":x.n}</b>`:""}</a>`).join("")
     + `<button type="button" id="bMenu" ${pr.some(x=>x.id===courant)?"":'aria-current="page"'}>${ICO.menu}<span>Menu</span></button>`;
   $("#bMenu").onclick = () => {
@@ -1427,9 +1453,9 @@ function navigation(items, courant, principaux){
 function principauxDe(r){
   return ({
     president:["accueil","consignes","caisse","evaluations"], vicepresident:["accueil","consignes","evaluations","notifications"],
-    encaissement:["accueil","consignes","registre","notifications"], caisse:["accueil","consignes","caisse","notifications"],
-    tresorerie:["accueil","consignes","cotisations","notifications"], formation:["accueil","consignes","tutorat","notifications"],
-    pedagogie:["accueil","consignes","pedagogie","notifications"], secretaire:["accueil","consignes","etudiants","notifications"],
+    encaissement:["accueil","registre","messages","consignes"], caisse:["accueil","caisse","messages","consignes"],
+    tresorerie:["accueil","consignes","cotisations","notifications"], formation:["accueil","tutorat","messages","consignes"],
+    pedagogie:["accueil","pedagogie","messages","consignes"], secretaire:["accueil","consignes","etudiants","notifications"],
     tuteur:["t-accueil","t-nouveau","t-consignes","t-notifs"]
   })[r] || ["accueil","consignes","notifications"];
 }
@@ -1807,6 +1833,145 @@ function blocConsignes(){
     <div class="clist">${L.slice(0,3).map(k=>{ const e = etatC(k); return `<button class="citem ${k.priorite==="Urgente"?"urg":""} ${e.k==="En retard"?"late":""}" data-cons="${esc(k.id)}"><span class="t">${esc(k.titre)}</span><span class="m"><span class="pill ${e.cls}">${esc(e.k)}</span><span>échéance ${dFR(k.echeance)}</span></span></button>`; }).join("")}</div></div>`;
 }
 
+
+/* =====================================================================
+   Messages WhatsApp aux étudiants (file d'envoi)
+   Les étudiants n'ont pas de compte : chaque message est préparé par l'application
+   et envoyé en un geste depuis le WhatsApp du responsable (lien wa.me).
+   domaine "fin" : encaissements, trésorerie-caisse ; domaine "peda" : formation.
+   ===================================================================== */
+const TYPES_MSG = {
+  recu:{l:"Confirmation de paiement", d:"fin"}, relance:{l:"Rappel de paiement", d:"fin"}, echange:{l:"Message après échange", d:"fin"},
+  absence:{l:"Absence", d:"peda"}, assiduite:{l:"Bilan d'assiduité", d:"peda"}, note:{l:"Note de formation", d:"peda"}, info:{l:"Information Académie", d:"peda"}
+};
+const domainesMsg = () => [can("msg.fin") && "fin", can("msg.peda") && "peda"].filter(Boolean);
+const prenomDe = s => (s?.nom||"").split(" ").slice(1).join(" ") || s?.nom || "";
+const signature = () => `${compte()?.nom||""}, ${ROLES[role()]?.l||"CVPB"} · Communauté Virtuelle de Port-Bouët`;
+const telDe = mat => S.prive[mat]?.tel || "";
+
+function situationTxt(e){
+  const parts = [];
+  if (!e.inscOk) parts.push(`solde d'inscription ${F(P().inscription - e.inscPayee)} FCFA`);
+  if (e.arriere) parts.push(`arriéré de cotisation ${F(e.arriere)} FCFA`);
+  if (e.resteCourant && S.C.courant) parts.push(`cotisation de ${S.C.courant.libelle} : ${F(e.resteCourant)} FCFA`);
+  return parts.length ? `Il vous reste à payer : ${parts.join(" ; ")}.` : "Vous êtes à jour de vos paiements. Merci !";
+}
+/* Texte calculé au moment de l'envoi, pour refléter la situation la plus récente */
+function texteMsg(m){
+  if (m.edite || ["echange","info"].includes(m.type)) return m.texte || "";
+  const s = etuBy(m.matricule), e = S.C.etu[m.matricule], p = S.C.peda[m.matricule], pr = prenomDe(s);
+  if (!s) return m.texte || "";
+  if (m.type==="recu"){
+    const x = S.encaissements.find(k=>k.num===m.ref);
+    if (!x) return m.texte || "";
+    return `Bonjour ${pr}, la CVPB confirme la réception de votre paiement de ${F(x.montant)} FCFA (${x.nature}${x.mois?` · ${moisLib(x.mois)}`:""}) du ${dFR(x.date)}, par ${x.mode}${x.ref?` (réf. ${x.ref})`:""}. Reçu n° ${x.num}.\n${situationTxt(e)}\n${signature()}`;
+  }
+  if (m.type==="relance") return relanceMsg(s, e) + `\n${signature()}`;
+  if (m.type==="absence"){
+    const se = S.seances.find(k=>k.id===m.ref);
+    const f = p.par[se?.formation] || {};
+    return `Bonjour ${pr}, vous avez été noté(e) absent(e) à la séance ${se?`${se.formation} · ${nomForm(se.formation)} du ${dLong(se.date)}`:"de formation"} de la CVPB Académie.\nVotre assiduité${se?" dans cette formation":""} est de ${pct(f.assiduite ?? p.assiduite)} (${f.pres ?? p.pres}/${f.total ?? p.total} séances). Le minimum requis pour valider est ${pct(P().assiduiteMin)}.\nSi votre absence était justifiée, répondez à ce message pour nous le signaler.\n${signature()}`;
+  }
+  if (m.type==="assiduite"){
+    const lignes = Object.entries(p.par).map(([c,f])=>`• ${c} · ${nomForm(c)} : ${pct(f.assiduite)} (${f.pres}/${f.total})`).join("\n");
+    const sous = p.assiduite!=null && p.assiduite < P().assiduiteMin;
+    return `Bonjour ${pr}, voici le point sur votre assiduité à la CVPB Académie au ${dFR(today())} :\n${lignes||"Aucune séance enregistrée."}\nAssiduité globale : ${pct(p.assiduite)}. ${sous?`Attention : le minimum pour valider une formation est ${pct(P().assiduiteMin)}. Nous comptons sur votre présence aux prochaines séances.`:"Continuez ainsi !"}\n${signature()}`;
+  }
+  if (m.type==="note"){
+    const code = String(m.ref).split("|")[0], f = p.par[code] || {};
+    return `Bonjour ${pr}, votre résultat en ${code} · ${nomForm(code)} : ${f.note==="ABS"?"absent(e) à l'évaluation":`${String(f.note).replace(".",",")}/20`}. Assiduité : ${pct(f.assiduite)}.\nRésultat : ${f.valide==null?"en cours":f.valide?"formation validée. Félicitations !":`formation non validée (il faut ${P().noteMin}/20 et ${pct(P().assiduiteMin)} d'assiduité).`}\n${signature()}`;
+  }
+  return m.texte || "";
+}
+/* Ajoute des messages « à envoyer » ; évite les doublons (même type, même étudiant, même référence) */
+async function preparerMessages(type, liste){
+  const deja = new Set(S.messages.filter(x=>x.statut!=="Annulé").map(x=>`${x.type}|${x.matricule}|${x.ref||""}`));
+  const nouveaux = liste.filter(x => !deja.has(`${type}|${x.matricule}|${x.ref||""}`));
+  const base = {type, domaine:TYPES_MSG[type].d, statut:"À envoyer", creeLe:nowISO(), par:S.uid, parNom:compte().nom};
+  const crees = nouveaux.map((x,i) => { const m = {...base, id:`M${Date.now().toString(36)}${i}${Math.random().toString(36).slice(2,5)}`, matricule:x.matricule, nom:etuBy(x.matricule)?.nom||"", ref:x.ref||"", texte:""}; try { m.texte = texteMsg(m); } catch(e){} return m; });
+  await Promise.all(crees.map(({id, ...d}) => S.db.doc("messages/"+id).set(d))).catch(()=>{});
+  return crees;
+}
+/* Ouvre WhatsApp puis marque le message comme envoyé */
+function envoyerMsg(m){
+  const tel = telDe(m.matricule);
+  if (!tel){ toast("Pas de numéro de téléphone pour cet étudiant : complétez sa fiche."); return; }
+  const texte = texteMsg(m);
+  window.open(waLink(tel, texte), "_blank", "noopener");
+  S.db.doc("messages/"+m.id).update({statut:"Envoyé", envoyeLe:nowISO(), envoyePar:compte().nom, texte}).catch(()=>{});
+}
+
+function vMessages(){
+  const f = S.mf, doms = lectureTotale() ? ["fin","peda"] : domainesMsg(), lecture = !presidence() && LECTURE_TOTALE.includes(role());
+  let L = S.messages.filter(m=>doms.includes(m.domaine));
+  const att = L.filter(m=>m.statut==="À envoyer");
+  const env = L.filter(m=>m.statut==="Envoyé");
+  if (f.type) L = L.filter(m=>m.type===f.type);
+  L = L.filter(m => f.onglet==="envoyes" ? m.statut==="Envoyé" : f.onglet==="ignores" ? m.statut==="Annulé" : m.statut==="À envoyer").sort((a,b)=>String(f.onglet==="envoyes"?b.envoyeLe:a.creeLe).localeCompare(String(f.onglet==="envoyes"?a.envoyeLe:b.creeLe)));
+  const types = Object.entries(TYPES_MSG).filter(([,t])=>doms.includes(t.d));
+  const fin = doms.includes("fin") && !lecture, peda = doms.includes("peda") && !lecture;
+  const sansTel = att.filter(m=>!telDe(m.matricule)).length;
+  return `<div class="spread"><div><h2>Messages WhatsApp aux étudiants</h2><p class="small muted">L'application prépare chaque message avec les données à jour. Touchez « Envoyer » : WhatsApp s'ouvre avec le texte prêt, il ne reste qu'à appuyer sur la flèche d'envoi.</p></div></div>
+  <div class="kpis">${kpi(att.length,"à envoyer", att.length?"warn":"g")}${kpi(env.filter(m=>dansMois(m.envoyeLe, moisCourant())).length,"envoyés ce mois-ci","g")}${kpi(sansTel,"sans numéro", sansTel?"bad":"g")}${kpi(env.length,"envoyés au total")}</div>
+  ${fin||peda?`<div class="card"><h3>Préparer des messages</h3><div class="row">
+    ${fin?`<button class="btn" id="pRel">Rappels de paiement (${aRelancer().length})</button>`:""}
+    ${peda?`<button class="btn" id="pAss">Bilan d'assiduité (sous ${pct(P().assiduiteMin)})</button><button class="btn" id="pAssT">Bilan d'assiduité (tous)</button>`:""}
+    <button class="btn" id="pLibre">Message libre</button></div>
+    <p class="small muted">Les confirmations de paiement${peda?", absences et notes":""} sont préparées automatiquement à chaque saisie.</p></div>`:""}
+  <div class="row"><div class="subtabs" role="group" aria-label="Messages">${[["attente",`À envoyer (${att.length})`],["envoyes","Envoyés"],["ignores","Ignorés"]].map(([k,l])=>`<button data-mo="${k}" aria-pressed="${(f.onglet||"attente")===k}">${l}</button>`).join("")}</div>
+  <select id="mft" aria-label="Type" style="max-width:240px">${opts(types.map(([k,t])=>[k,t.l]), f.type, "Tous les types")}</select></div>
+  ${L.length?`<div class="clist">${L.slice(0,150).map(m=>{ const tel = telDe(m.matricule); return `<div class="citem" style="cursor:default">
+    <span class="t">${esc(m.nom||m.matricule)} <span class="pill ${TYPES_MSG[m.type]?.d==="fin"?"":"ok"}">${esc(TYPES_MSG[m.type]?.l||m.type)}</span>${tel?"":' <span class="pill bad">Pas de numéro</span>'}</span>
+    <span class="small" style="white-space:pre-wrap;color:var(--ink)">${esc((m.statut==="À envoyer"?texteMsg(m):m.texte).slice(0,260))}${(m.statut==="À envoyer"?texteMsg(m):m.texte).length>260?"…":""}</span>
+    <span class="m">${m.statut==="Envoyé"?`Envoyé le ${new Date(m.envoyeLe).toLocaleString("fr-FR",{day:"numeric",month:"short",hour:"2-digit",minute:"2-digit"})} par ${esc(m.envoyePar||"")}`:`Préparé le ${dFR(String(m.creeLe).slice(0,10))} par ${esc(m.parNom||"")}`}</span>
+    ${m.statut==="À envoyer"&&!lecture?`<span class="row"><button class="btn sm vert" data-menv="${esc(m.id)}" ${tel?"":"disabled"}>Envoyer sur WhatsApp</button><button class="btn sm" data-mmod="${esc(m.id)}">Modifier</button><button class="btn sm ghost" data-mign="${esc(m.id)}">Ignorer</button></span>`:""}
+  </div>`; }).join("")}</div>`:`<div class="empty">${(f.onglet||"attente")==="attente"?"Aucun message en attente.":"Aucun message."}</div>`}`;
+}
+function bindMessages(){
+  const main = $("#main"), on = (s, ev, fn) => { const el = $(s); if (el) el[ev] = fn; };
+  const parId = id => S.messages.find(m=>m.id===id);
+  main.querySelectorAll("[data-mo]").forEach(b => b.onclick = () => { S.mf.onglet = b.dataset.mo; render(); });
+  on("#mft","onchange",e=>{ S.mf.type = e.target.value; render(); });
+  main.querySelectorAll("[data-menv]").forEach(b => b.onclick = () => envoyerMsg(parId(b.dataset.menv)));
+  main.querySelectorAll("[data-mign]").forEach(b => b.onclick = () => S.db.doc("messages/"+b.dataset.mign).update({statut:"Annulé"}).catch(()=>{}));
+  main.querySelectorAll("[data-mmod]").forEach(b => b.onclick = () => { const m = parId(b.dataset.mmod); formMessage(m.matricule, m); });
+  on("#pRel","onclick", async () => { const n = (await preparerMessages("relance", aRelancer().map(x=>({matricule:x.s.matricule, ref:"R"+today()})))).length; toast(n ? `${n} rappel(s) de paiement préparé(s)` : "Rien de nouveau à préparer."); });
+  const bilan = async tous => { const L = S.etudiants.filter(s=>s.academie && s.statut!=="Inactif" && S.C.peda[s.matricule].total>0 && (tous || S.C.peda[s.matricule].assiduite < P().assiduiteMin)); const n = (await preparerMessages("assiduite", L.map(s=>({matricule:s.matricule, ref:"A"+today()})))).length; toast(n ? `${n} bilan(s) d'assiduité préparé(s)` : "Aucun étudiant concerné."); };
+  on("#pAss","onclick",()=>bilan(false)); on("#pAssT","onclick",()=>bilan(true));
+  on("#pLibre","onclick",()=>formMessage(""));
+}
+/* Message libre ou modification d'un message préparé */
+function formMessage(mat, existant){
+  const fin = can("msg.fin"), types = existant ? [[existant.type, TYPES_MSG[existant.type]?.l]] : [fin && ["echange","Message après échange"], can("msg.peda") && ["info","Information Académie"]].filter(Boolean);
+  const s = mat && etuBy(mat);
+  openSheet(`<h2>${existant?"Modifier le message":"Message WhatsApp à un étudiant"}</h2>
+  <form id="mfm" class="form">
+    ${existant?`<p class="small"><b>${esc(existant.nom)}</b></p>`:`<label class="f" for="m_e">Étudiant<input type="text" id="m_e" list="dl_m" autocomplete="off" value="${s?esc(s.matricule+" · "+s.nom):""}" placeholder="Tapez un nom ou un matricule"></label>
+    <datalist id="dl_m">${S.etudiants.map(x=>`<option value="${esc(x.matricule+" · "+x.nom)}"></option>`).join("")}</datalist>`}
+    <label class="f" for="m_t">Type<select id="m_t">${opts(types, existant?.type)}</select></label>
+    <label class="f" for="m_x">Message<textarea id="m_x" rows="7" maxlength="1500">${esc(existant ? texteMsg(existant) : s ? `Bonjour ${prenomDe(s)}, suite à notre échange de ce jour, ` : "")}</textarea><span class="hint">Restez factuel et courtois. Le message part depuis votre WhatsApp.</span></label>
+    <div class="row"><button type="submit" class="btn vert">Envoyer sur WhatsApp</button><button type="button" class="btn" id="m_later">Garder pour plus tard</button><button type="button" class="btn ghost" data-close>Annuler</button></div>
+  </form>`);
+  const go = async envoyer => {
+    const texte = $("#m_x").value.trim(); if (texte.length < 5) return toast("Rédigez le message.");
+    if (existant){ await S.db.doc("messages/"+existant.id).update({texte, edite:true}).catch(()=>{}); const m = {...existant, texte, edite:true}; closeSheet(); if (envoyer) envoyerMsg(m); return; }
+    const v = $("#m_e").value.trim(), m0 = v.split("·")[0].trim().toUpperCase(); if (!etuBy(m0)) return toast("Sélectionnez l'étudiant dans la liste.");
+    if (envoyer && !telDe(m0)) return toast("Pas de numéro de téléphone pour cet étudiant.");
+    const type = $("#m_t").value, id = `M${Date.now().toString(36)}${Math.random().toString(36).slice(2,5)}`;
+    const m = {type, domaine:TYPES_MSG[type].d, matricule:m0, nom:etuBy(m0).nom, ref:"", texte, edite:true, statut:"À envoyer", creeLe:nowISO(), par:S.uid, parNom:compte().nom};
+    if (await write(()=>S.db.doc("messages/"+id).set(m), envoyer ? "" : "Message gardé dans « À envoyer »")){ closeSheet(); if (envoyer) envoyerMsg({...m, id}); }
+  };
+  $("#mfm").onsubmit = e => { e.preventDefault(); go(true); };
+  $("#m_later").onclick = () => go(false);
+}
+/* Historique des messages d'un étudiant (fiche) */
+function histoMessages(mat){
+  const L = S.messages.filter(m=>m.matricule===mat && m.statut!=="Annulé").sort((a,b)=>String(b.envoyeLe||b.creeLe).localeCompare(String(a.envoyeLe||a.creeLe)));
+  if (!domainesMsg().length && !lectureTotale()) return "";
+  return `<div class="card"><div class="spread"><h3>Messages WhatsApp (${L.length})</h3>${domainesMsg().length&&!(LECTURE_TOTALE.includes(role()))?`<button class="btn sm vert" id="fMsg">Écrire un message</button>`:""}</div>
+    ${L.length?`<div class="plist">${L.slice(0,8).map(m=>`<div class="prow"><span><b class="small">${esc(TYPES_MSG[m.type]?.l||m.type)}</b><br><span class="small muted">${m.statut==="Envoyé"?`Envoyé le ${dFR(String(m.envoyeLe).slice(0,10))} par ${esc(m.envoyePar||"")}`:"À envoyer"}</span></span>${m.statut==="À envoyer"&&domainesMsg().includes(m.domaine)?`<button class="btn sm" data-fmenv="${esc(m.id)}">Envoyer</button>`:""}</div>`).join("")}</div>`:`<div class="empty">Aucun message pour cet étudiant.</div>`}</div>`;
+}
+
 /* ======== Données en direct ======== */
 function sub(path, key, fn, q){
   const timer = setTimeout(()=>{ S.stale=true; queueRender(); }, 10000);
@@ -1818,11 +1983,12 @@ const rows = snap => snap.docs.map(d=>({id:d.id, ...d.data()}));
 function abonner(){
   if (S.abonne) return; S.abonne = true;
   S.evalP = moisCourant(); S.rp.mois = moisCourant(); S.rp.a = moisCourant()+"-01"; S.rp.b = today();
-  const r = role(), db = S.db, has = (...l) => r==="president" || LECTURE_TOTALE.includes(r) || l.includes(r);
+  const r = role(), db = S.db, has = (...l) => r==="president" || LECTURE_TOTALE.includes(r) || inclut(l, r);
   db.doc("parametres/general").onSnapshot(d => { S.params = d.exists ? d.data() : {}; S.loaded.params = true; queueRender(); }, () => { S.params = {}; S.loaded.params = true; queueRender(); });
   if (has("formation","secretaire")) sub("users","comptes", s => { S.comptes = Object.fromEntries(s.docs.map(d=>[d.id,d.data()])); }); else S.comptes = {[S.email]: S.moi};
   if (has("encaissement","tresorerie","formation","pedagogie","tuteur","secretaire")) sub("etudiants","etudiants", s => { S.etudiants = rows(s); });
-  if (has("encaissement","tresorerie")){ sub("prive","prive", s => { S.prive = Object.fromEntries(s.docs.map(d=>[d.id,d.data()])); }); sub("encaissements","encaissements", s => { S.encaissements = rows(s); }); }
+  if (has("encaissement","tresorerie","formation","pedagogie")) sub("prive","prive", s => { S.prive = Object.fromEntries(s.docs.map(d=>[d.id,d.data()])); });
+  if (has("encaissement","tresorerie")){ sub("encaissements","encaissements", s => { S.encaissements = rows(s); }); }
   if (has("encaissement","caisse","tresorerie")) sub("depots","depots", s => { S.depots = rows(s); });
   if (has("caisse","tresorerie")) sub("operations","operations", s => { S.operations = rows(s); });
   if (has("formation","pedagogie","secretaire")){ sub("seances","seances", s => { S.seances = rows(s); }); sub("notes","notes", s => { S.notes = rows(s); }); }
@@ -1833,6 +1999,8 @@ function abonner(){
   if (lectureTotale()){ sub("consignes","consignes", s => { S.consignes = rows(s); }); sub("evaluations","evaluations", s => { S.evaluations = rows(s); }); }
   else { sub("consignes","consignes", s => { S.consignes = rows(s); }, db.collection("consignes").where("dest","==",S.email)); sub("evaluations","evaluations", s => { S.evaluations = rows(s); }, db.collection("evaluations").where("email","==",S.email)); }
   sub("classement","classements", s => { S.classements = rows(s); });
+  if (lectureTotale()) sub("messages","messages", s => { S.messages = rows(s); });
+  else domainesMsg().forEach(d => sub("messages","msg_"+d, s => { S["msg_"+d] = rows(s); S.messages = [...(S.msg_fin||[]), ...(S.msg_peda||[])]; }, db.collection("messages").where("domaine","==",d)));
   db.doc(`etat/${S.uid}`).onSnapshot(d => { S.etat = d.exists ? d.data() : {}; queueRender(); }, ()=>{});
 }
 (async function init(){
