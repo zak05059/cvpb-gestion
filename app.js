@@ -760,10 +760,13 @@ function trancheDe(e, na, mt){
 function affectationTxt(e, na, mt){
   const mens = P().mensualite;
   if (na===N_INSC){
-    const reste = Math.max(0, P().inscription - e.inscPayee);
+    const reste = Math.max(0, P().inscription - e.inscPayee), ts = P().tshirt;
     if (!reste) return `Inscription déjà soldée : ce montant s'ajoutera aux cotisations.`;
-    return mt < reste ? `<b>Paiement échelonné de l'inscription</b> : il restera ${F(reste-mt)} FCFA à payer.` : `Inscription soldée${mt>reste?` ; ${F(mt-reste)} FCFA imputés aux cotisations`:""}.`;
+    if (e.inscPayee < ts && e.inscPayee + mt < ts) return `<b style="color:var(--bad)">Refusé : le T-shirt (${F(ts)} FCFA) se paie en une seule fois.</b> Le premier versement de l'inscription doit être d'au moins ${F(ts - e.inscPayee)} FCFA.`;
+    const tsTxt = e.inscPayee < ts ? `T-shirt payé (${F(ts)} FCFA)` : "T-shirt déjà payé";
+    return mt < reste ? `${tsTxt} · <b>paiement échelonné de l'inscription</b> : il restera ${F(reste-mt)} FCFA à payer (part cotisation, payable en plusieurs fois).` : `${tsTxt} · inscription soldée${mt>reste?` ; ${F(mt-reste)} FCFA imputés aux cotisations`:""}.`;
   }
+  if (na===NATURES[2]) return mt < P().tshirt ? `<b style="color:var(--bad)">Refusé : le T-shirt (${F(P().tshirt)} FCFA) se paie en une seule fois.</b>` : "";
   if (na!==N_COTI) return "";
   const C = S.C; let reste = mt; const L = [];
   for (const m of C.mois){
@@ -787,7 +790,7 @@ function formEnc(matInit){
     <div class="g2">
       <label class="f" for="n_na">Nature<select id="n_na">${opts(NATURES)}</select></label>
       <label class="f" for="n_mo">Mois concerné<select id="n_mo">${opts(C.mois.map(m=>[m.code,m.libelle]), C.courant?.code, "—")}</select></label>
-      <label class="f" for="n_mt">Montant encaissé (FCFA)<input type="number" id="n_mt" min="1" step="1" required><span class="hint">Paiement échelonné accepté : un montant inférieur à la mensualité (${F(P().mensualite)} FCFA) est enregistré comme une tranche.</span></label>
+      <label class="f" for="n_mt">Montant encaissé (FCFA)<input type="number" id="n_mt" min="1" step="1" required><span class="hint">Mensualité de ${F(P().mensualite)} FCFA payable en plusieurs fois. Inscription ${F(P().inscription)} FCFA : le T-shirt obligatoire (${F(P().tshirt)} FCFA) se paie en une seule fois, le reste peut être échelonné.</span></label>
       <label class="f" for="n_d">Date<input type="date" id="n_d" value="${today()}" max="${today()}" required></label>
       <label class="f" for="n_md">Mode de paiement<select id="n_md">${opts(P().modes)}</select></label>
       <label class="f" for="n_rf">Référence de la transaction<input type="text" id="n_rf" maxlength="40" placeholder="Ex. WV-NV-014"></label>
@@ -815,7 +818,8 @@ function formEnc(matInit){
   /* Aperçu de l'affectation : tranche, mois soldé(s), reste à payer */
   const apercu = () => {
     const m = matOf(), e = m && C.etu[m], na = $("#n_na").value, mt = Math.round(Number($("#n_mt").value)) || 0;
-    $("#n_prev").innerHTML = e && mt > 0 ? `<div class="banner" style="border-color:var(--line)">${affectationTxt(e, na, mt)}</div>` : "";
+    const txt = mt > 0 ? (e ? affectationTxt(e, na, mt) : na===NATURES[2] && mt < P().tshirt ? `<b style="color:var(--bad)">Refusé : le T-shirt (${F(P().tshirt)} FCFA) se paie en une seule fois.</b>` : "") : "";
+    $("#n_prev").innerHTML = txt ? `<div class="banner" style="border-color:var(--line)">${txt}</div>` : "";
   };
   $("#n_mt").oninput = () => { $("#n_mt").dataset.touched = "1"; apercu(); };
   $("#n_mo").onchange = () => { $("#n_mo").dataset.touched = "1"; };
@@ -829,6 +833,10 @@ function formEnc(matInit){
     if (!(montant>0)){ toast("Le montant doit être supérieur à 0."); return; }
     const na = $("#n_na").value, mo = $("#n_mo").value;
     if ((na===N_COTI) && !mo){ toast("Indiquez le mois concerné par la cotisation."); return; }
+    /* Le T-shirt obligatoire se paie en une seule fois */
+    const ts = P().tshirt, eS = m && C.etu[m];
+    if (na===N_INSC && eS && eS.inscPayee < ts && eS.inscPayee + montant < ts){ toast(`Le T-shirt (${F(ts)} FCFA) se paie en une seule fois : versement minimum ${F(ts - eS.inscPayee)} FCFA.`); return; }
+    if (na===NATURES[2] && montant < ts){ toast(`Le T-shirt (${F(ts)} FCFA) se paie en une seule fois.`); return; }
     const ref = $("#n_rf").value.trim();
     if ($("#n_md").value!=="Espèces" && !ref){ toast("La référence est obligatoire pour un paiement mobile ou bancaire."); return; }
     if (ref && S.encaissements.some(e=>valide(e) && (e.ref||"").trim().toUpperCase()===ref.toUpperCase())){ toast("Cette référence de transaction existe déjà dans le registre."); return; }
@@ -871,7 +879,7 @@ function vCotisations(){
     <div class="kpi"><span class="v">${actifs.filter(s=>C.etu[s.matricule].enEchelonnement).length}</span><span class="l">étudiant(s) en paiement échelonné</span></div>
   </div>
   <div class="row"><select id="csit" style="width:auto" aria-label="Situation">${opts(["À jour","Mois en cours","En retard","Inscription incomplète","Aucun paiement","Inactif"], f.situation, "Toutes situations")}</select>
-  <span class="small muted">Règle : l'inscription (${F(P().inscription)} FCFA) comprend le T-shirt (${F(P().tshirt)}) ; tout montant au-delà du T-shirt est imputé aux cotisations, affectées mois après mois. Un mois devient un arriéré une fois terminé. Le paiement échelonné est accepté : chaque tranche complète le plus ancien mois non soldé (case orange = mois payé en partie).</span></div>
+  <span class="small muted">Règle : l'inscription (${F(P().inscription)} FCFA) comprend le T-shirt (${F(P().tshirt)}) ; tout montant au-delà du T-shirt est imputé aux cotisations, affectées mois après mois. Un mois devient un arriéré une fois terminé. Le T-shirt obligatoire se paie en une seule fois ; le reste de l'inscription et les mensualités peuvent être payés en plusieurs tranches, chaque tranche complétant le plus ancien mois non soldé (case orange = mois payé en partie).</span></div>
   <div class="tablewrap"><table><thead><tr><th>Matricule</th><th>Nom et prénoms</th><th>Inscription</th>${C.mois.map(m=>`<th title="${esc(m.libelle)}">${esc(m.code)}</th>`).join("")}<th class="r">Arriéré</th><th>Situation</th>${tel?"<th></th>":""}</tr></thead><tbody>
   ${L.map(s=>{ const e = C.etu[s.matricule]; return `<tr class="click" data-mat="${esc(s.matricule)}"><td class="num">${esc(s.matricule)}</td><td><b>${esc(s.nom)}</b></td><td>${e.inscOk?'<span class="cell ok">Soldée</span>':e.inscPayee?`<span class="cell part">${F(e.inscPayee)}</span>`:e.tshirtVendu?'<span class="cell part" title="T-shirt acheté hors inscription">T-shirt seul</span>':'<span class="cell due">Non payée</span>'}</td>
     ${C.mois.map(m=>{ const v = e.parMois[m.code]||0, full = v>=P().mensualite; const st = full?"ok": m.fin<C.today?(v?"part":"due"): m.debut<=C.today?"cur":(v?"part":"fut"); return `<td><span class="cell ${st}" ${v&&!full?`title="${F(v)} / ${F(P().mensualite)} FCFA versés"`:""}>${full?"✓":v?F(v):st==="fut"?"·":"0"}</span></td>`; }).join("")}
