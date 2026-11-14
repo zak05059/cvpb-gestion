@@ -1,5 +1,5 @@
 /* Service worker CVPB Manager : fonctionne hors ligne et affiche les notifications. */
-const VERSION = "cvpb-v8";
+const VERSION = "cvpb-v10";
 const COQUILLE = ["./", "index.html", "app.js", "fb.js", "firebase-config.js", "manifest.webmanifest",
   "icon-192.png", "icon-512.png", "maskable-192.png", "maskable-512.png", "apple-touch-icon.png", "favicon.png", "badge-96.png"];
 
@@ -17,7 +17,7 @@ self.addEventListener("fetch", e => {
   if (!memeOrigine && !bibliotheque) return;
   if (memeOrigine){
     // Réseau d'abord (mises à jour immédiates), cache si hors ligne
-    e.respondWith(fetch(e.request).then(r => { if (r.ok){ const c = r.clone(); caches.open(VERSION).then(x => x.put(e.request, c)); } return r; })
+    e.respondWith(fetch(e.request, {cache:"no-store"}).then(r => { if (r.ok){ const c = r.clone(); caches.open(VERSION).then(x => x.put(e.request, c)); } return r; })
       .catch(() => caches.match(e.request, {ignoreSearch:true}).then(r => r || caches.match("index.html"))));
   } else {
     // Bibliothèques Firebase et polices : cache d'abord

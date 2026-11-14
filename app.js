@@ -342,7 +342,9 @@ function recalc(){
   if (lectureTotale()){ const ret = S.consignes.filter(k=>!["Faite","Annulée"].includes(k.statut) && k.echeance<today()); if (ret.length) S.C.alertes.push({niv:"warn", titre:`${ret.length} consigne(s) non exécutée(s) à l'échéance`, detail:[...new Set(ret.map(k=>k.destNom))].slice(0,4).join(", "), pour:["president"], lien:"#consignes"}); }
 }
 function render(){
-  rendu(); finRendu();
+  try { rendu(); }
+  catch(e){ console.error(e); $("#main").innerHTML = `<div class="card"><h3>Un écran n'a pas pu s'afficher</h3><p class="small muted">${esc(e?.message||e)}</p><div class="row"><a class="btn" href="#accueil">Revenir à l'accueil</a><button class="btn" onclick="location.reload()">Recharger</button></div></div>`; }
+  finally { try { finRendu(); } catch(e){ const sp = document.getElementById("splash"); if (sp) sp.remove(); } }
 }
 function rendu(){
   const main = $("#main");
@@ -373,8 +375,12 @@ function rendu(){
   ({suivi:bindSuivi, synthese:bindSynthese, catalogue:bindCatalogue, messages:bindMessages, consignes:bindConsignes, rapports:bindRapports, evaluations:bindEvaluations, classement:bindClassement}[v]||(()=>{}))();
   $("#main").querySelectorAll("[data-cons]").forEach(b => b.onclick = () => ficheConsigne(b.dataset.cons));
   if (!["suivi","synthese"].includes(v)){ $("#main").querySelectorAll("[data-rh]").forEach(b => b.onclick = e => { e.preventDefault(); ficheHebdo(b.dataset.rh); }); $("#main").querySelectorAll("[data-dos]").forEach(b => b.onclick = () => ficheDossier(b.dataset.dos)); $("#main").querySelectorAll("[data-syn]").forEach(b => b.onclick = () => ficheSynthese(b.dataset.syn)); }
+  $("#main").querySelectorAll("[data-goto-sub]").forEach(a => a.addEventListener("click", () => { S.sub.synthese = a.dataset.gotoSub; }));
   $("#main").querySelectorAll("[data-seav]").forEach(b => b.onclick = () => validerSeance(b.dataset.seav, true));
   $("#main").querySelectorAll("[data-sear]").forEach(b => b.onclick = () => validerSeance(b.dataset.sear, false));
+  $("#main").querySelectorAll("[data-seao]").forEach(b => b.onclick = () => validerSeance(b.dataset.seao, "o"));
+  $("#main").querySelectorAll("[data-seac]").forEach(b => b.onclick = () => validerSeance(b.dataset.seac, "c"));
+  [["notev","v"],["noter","r"],["noteo","o"],["notec","c"]].forEach(([k,a]) => $("#main").querySelectorAll(`[data-${k}]`).forEach(b => b.onclick = () => decisionNotes(b.dataset[k], a)));
 }
 function espace(tut){
   document.body.classList.toggle("tut", !!tut);
@@ -583,6 +589,7 @@ function vDashSG(){
   const incomplets = E.retournes + X.sansAction.length + (E.sem ? E.nonSuivis.length : 0);
   return `${entete("Mon espace · Secrétariat général")}
   <div class="kpis">${kpi(`${E.soumis} / ${E.attendus}`,`rapports soumis${E.sem?` (${parseD(E.sem).toLocaleDateString("fr-FR",{day:"numeric",month:"short"})})`:""}`, E.retard?"warn":"g")}${kpi(E.valides,"rapports validés")}${kpi(aCtl.length,"à contrôler", aCtl.length?"warn":"g")}${kpi(E.controles,"contrôlés","g")}${kpi(rr.length,"rapports des responsables reçus")}${kpi(rr.filter(r=>r.statut==="Transmis").length,"en attente d'examen", rr.some(r=>r.statut==="Transmis")?"warn":"g")}${kpi(incomplets,"dossiers incomplets ou non traités", incomplets?"bad":"g")}${kpi(rec.length,"difficultés récurrentes")}</div>
+  <div class="row"><a class="btn" href="#synthese" data-goto-sub="rapports">Rapports des responsables</a><a class="btn" href="#synthese" data-goto-sub="controles">Historique des contrôles</a><a class="btn" href="#suivi">État des suivis</a></div>
   <div class="card"><div class="spread"><div><h3>Synthèse hebdomadaire</h3><p class="small muted">${sem?esc(semLib(sem)):"Aucune semaine échue"}${syn?` · ${esc(syn.statut)}`:" · à préparer"}</p></div><a class="btn primary" href="#synthese">${syn?.statut==="Transmise"?"Voir":"Préparer la synthèse"}</a></div></div>
   <div class="cols"><div class="card"><div class="spread"><h3>Rapports validés à contrôler</h3><a class="btn ghost" href="#suivi">Suivi</a></div>${aCtl.length?`<div class="clist">${aCtl.slice(0,8).map(r=>`<button class="citem" data-rh="${esc(r.id)}"><span class="t">${esc(r.tuteurNom)} ${pillRH(r.statut)}</span><span class="m"><span>${esc(semLib(r.semaine))}</span><span>· validé par ${esc(r.validation?.par||"")}</span></span></button>`).join("")}</div>`:`<div class="empty">Rien à contrôler.</div>`}</div>
   <div class="card"><h3>Difficultés récurrentes</h3>${rec.length?`<div class="plist">${rec.map(x=>`<div class="prow"><span>${esc(nomEtu(x.m))}</span><span class="pill warn">${x.n} semaines</span></div>`).join("")}</div>`:`<div class="empty">Aucun étudiant signalé plusieurs semaines.</div>`}<h3>Mes alertes</h3>${alertesHTML(mesAlertes(),5)}</div></div>`;
@@ -970,17 +977,26 @@ function vPedagogie(){
     const L = S.seances.slice().sort((a,b)=>b.date.localeCompare(a.date));
     body = `<div class="spread"><p class="small muted">P présent · R retard · J absent justifié · A absent non justifié. Le retard compte comme présent.</p>${edit?`<button class="btn vert" id="newSea">Pointer une séance</button>`:""}</div>
     <div class="tablewrap"><table><thead><tr><th>Date</th><th>Formation</th><th class="r">Présents</th><th class="r">Retards</th><th class="r">Absents</th><th class="r">Taux</th><th>Pointé par</th><th>Validation</th><th></th></tr></thead><tbody>
-    ${L.map(se=>{ const v = Object.values(se.presences||{}).filter(Boolean); const c = k=>v.filter(x=>x===k).length; return `<tr><td>${dLong(se.date)}</td><td>${esc(se.formation)} · <span class="small">${esc(nomForm(se.formation))}</span></td><td class="r">${c("P")}</td><td class="r">${c("R")}</td><td class="r">${c("J")+c("A")}</td><td class="r">${v.length?pct((c("P")+c("R"))/v.length):"—"}</td><td class="small">${esc(se.parNom||"")}</td><td>${(()=>{ const st = se.validation?.statut || "Soumise"; return `<span class="pill ${st==="Validée"?"ok":st==="Retournée"?"bad":"warn"}" title="${esc(se.validation?.obs||"")}">${esc(st)}</span>`; })()}</td><td class="row">${valide && (se.validation?.statut||"Soumise")!=="Validée"?`<button class="btn sm vert" data-seav="${esc(se.id)}">Valider</button><button class="btn sm" data-sear="${esc(se.id)}">Retourner</button>`:""}${edit && (valide || se.validation?.statut!=="Validée")?`<button class="btn sm ghost" data-sea="${esc(se.id)}">Modifier</button>`:""}</td></tr>`; }).join("") || `<tr><td colspan="9"><div class="empty">Aucune séance pointée.</div></td></tr>`}
+    ${L.map(se=>{ const v = Object.values(se.presences||{}).filter(Boolean); const c = k=>v.filter(x=>x===k).length; return `<tr><td>${dLong(se.date)}</td><td>${esc(se.formation)} · <span class="small">${esc(nomForm(se.formation))}</span></td><td class="r">${c("P")}</td><td class="r">${c("R")}</td><td class="r">${c("J")+c("A")}</td><td class="r">${v.length?pct((c("P")+c("R"))/v.length):"—"}</td><td class="small">${esc(se.parNom||"")}</td><td>${(()=>{ const st = se.validation?.statut || "Soumise"; return `<span class="pill ${st==="Validée"?"ok":st==="Retournée"?"bad":"warn"}" title="${esc(se.validation?.obs||"")}">${esc(st)}</span>`; })()}</td><td class="row">${valide && (se.validation?.statut||"Soumise")!=="Validée"?`<button class="btn sm vert" data-seav="${esc(se.id)}">Valider</button><button class="btn sm" data-sear="${esc(se.id)}">Retourner</button>`:""}${valide && se.validation?.statut==="Validée"?`<button class="btn sm" data-seao="${esc(se.id)}">Rouvrir</button>`:""}${role()==="secretaire" && se.validation?.statut==="Validée" && !se.controle?`<button class="btn sm" data-seac="${esc(se.id)}">Contrôler</button>`:""}${se.controle?'<span class="pill ok">Contrôlée</span>':""}${edit && se.validation?.statut!=="Validée"?`<button class="btn sm ghost" data-sea="${esc(se.id)}">Modifier</button>`:""}</td></tr>`; }).join("") || `<tr><td colspan="9"><div class="empty">Aucune séance pointée.</div></td></tr>`}
     </tbody></table></div>`;
   }
   if (sub==="notes"){
     const code = S.sub.noteForm || forms[0]?.code;
-    const L = apprenantsPour(code), N = S.notes.find(n=>n.id===code)?.notes || {};
-    body = `<div class="row"><label class="f" for="nfo" style="min-width:260px">Formation<select id="nfo">${opts(forms.map(f=>[f.code,`${f.code} · ${f.intitule}`]), code)}</select></label></div>
+    const L = apprenantsPour(code), ND = S.notes.find(n=>n.id===code), N = ND?.notes || {}, vst = ND?.validation?.statut || (ND ? "Soumises" : "");
+    const verrou = vst==="Validées";
+    const editN = edit && !verrou;
+    body = `<div class="row"><label class="f" for="nfo" style="min-width:260px">Formation<select id="nfo">${opts(forms.map(f=>[f.code,`${f.code} · ${f.intitule}`]), code)}</select></label>
+    ${vst?`<span class="pill ${vst==="Validées"?"ok":vst==="Retournées"?"bad":"warn"}" title="${esc(ND?.validation?.obs||"")}">Notes ${esc(vst.toLowerCase())}</span>`:""}
+    ${valide && ND && vst!=="Validées"?`<button class="btn sm vert" data-notev="${esc(code)}">Valider les notes</button><button class="btn sm" data-noter="${esc(code)}">Retourner</button>`:""}
+    ${valide && vst==="Validées"?`<button class="btn sm" data-noteo="${esc(code)}">Rouvrir pour rectification</button>`:""}
+    ${role()==="secretaire" && vst==="Validées"?`<button class="btn sm" data-notec="${esc(code)}">Contrôler</button>`:""}</div>
+    ${vst==="Retournées"?`<div class="banner">Retournées par ${esc(ND.validation.par||"")} : ${esc(ND.validation.obs||"")}</div>`:""}
+    ${verrou?`<p class="small muted">Notes validées le ${new Date(ND.validation.le).toLocaleDateString("fr-FR")} par ${esc(ND.validation.par)} : elles ne se modifient plus, sauf réouverture pour rectification.</p>`:""}
     <p class="small muted">Note sur 20 (décimales autorisées) ou ABS pour un absent à l'évaluation. Validation : note ≥ ${P().noteMin} et assiduité ≥ ${pct(P().assiduiteMin)}.</p>
     <div class="tablewrap"><table><thead><tr><th>Matricule</th><th>Nom</th><th class="r">Assiduité</th><th>Note /20</th><th>Résultat</th></tr></thead><tbody>
-    ${L.map(s=>{ const f = C.peda[s.matricule].par[code]||{}; const v = N[s.matricule]; return `<tr><td class="num">${esc(s.matricule)}</td><td>${esc(s.nom)}</td><td class="r">${pct(f.assiduite)}</td><td style="width:120px">${edit?`<input type="text" inputmode="decimal" class="noteIn" data-mat="${esc(s.matricule)}" value="${v==null?"":esc(String(v).replace(".",","))}" aria-label="Note de ${esc(s.nom)}" style="min-height:32px;padding:4px 8px">`:esc(v??"—")}</td><td>${f.valide==null?'<span class="pill mute">—</span>':f.valide?'<span class="pill ok">Validée</span>':'<span class="pill bad">Non validée</span>'}</td></tr>`; }).join("") || `<tr><td colspan="5"><div class="empty">Aucun apprenant pour ce niveau.</div></td></tr>`}
-    </tbody></table></div>${edit&&L.length?`<div class="row"><button class="btn primary" id="saveNotes">Enregistrer les notes</button></div>`:""}`;
+    ${L.map(s=>{ const f = C.peda[s.matricule].par[code]||{}; const v = N[s.matricule]; return `<tr><td class="num">${esc(s.matricule)}</td><td>${esc(s.nom)}</td><td class="r">${pct(f.assiduite)}</td><td style="width:120px">${editN?`<input type="text" inputmode="decimal" class="noteIn" data-mat="${esc(s.matricule)}" value="${v==null?"":esc(String(v).replace(".",","))}" aria-label="Note de ${esc(s.nom)}" style="min-height:32px;padding:4px 8px">`:esc(v??"—")}</td><td>${f.valide==null?'<span class="pill mute">—</span>':f.valide?'<span class="pill ok">Validée</span>':'<span class="pill bad">Non validée</span>'}</td></tr>`; }).join("") || `<tr><td colspan="5"><div class="empty">Aucun apprenant pour ce niveau.</div></td></tr>`}
+    </tbody></table></div>${editN&&L.length?`<div class="row"><button class="btn primary" id="saveNotes">Soumettre les notes</button></div>`:""}
+    ${ND?.historique?.length?`<details class="card"><summary>Historique des notes (${ND.historique.length})</summary>${histoHTML(ND.historique)}</details>`:""}`;
   }
   if (sub==="assiduite"){
     const L = S.etudiants.filter(s=>s.academie && s.statut!=="Inactif").sort((a,b)=>(C.peda[a.matricule].assiduite??2)-(C.peda[b.matricule].assiduite??2));
@@ -1022,9 +1038,10 @@ async function saveNotes(code){
   document.querySelectorAll(".noteIn").forEach(i => { const raw = i.value.trim().toUpperCase().replace(",","."); if (raw===""){ delete cur[i.dataset.mat]; return; } if (raw==="ABS"){ cur[i.dataset.mat]="ABS"; return; } const n = Number(raw); if (isNaN(n)||n<0||n>20){ bad++; i.style.borderColor="var(--bad)"; return; } cur[i.dataset.mat] = n; });
   if (bad){ toast(`${bad} note(s) invalide(s) : saisissez un nombre entre 0 et 20 ou ABS.`); return; }
   const avant = S.notes.find(n=>n.id===code)?.notes || {};
-  const changes = Object.entries(cur).filter(([k,v])=>String(avant[k])!==String(v)).map(([k,v])=>({matricule:k, ref:`${code}|${v}`}));
-  if (changes.length) setTimeout(() => preparerMessages("note", changes).then(L => L.length && toast(`${L.length} message(s) de note préparé(s) dans « WhatsApp étudiants »`)), 800);
-  if (await write(()=>S.db.doc("notes/"+code).set({notes:cur, majLe:nowISO(), par:S.uid}), "Notes enregistrées")) log("notes", `Notes ${code} mises à jour (${Object.keys(cur).length} apprenants)`, ["president"]);
+  const ND = S.notes.find(n=>n.id===code);
+  if (ND?.validation?.statut==="Validées") return toast("Ces notes sont validées : demandez au Responsable Formation de les rouvrir pour rectification.");
+  const nb = Object.keys(cur).filter(k=>String(avant[k])!==String(cur[k])).length;
+  if (await write(()=>S.db.doc("notes/"+code).set({notes:cur, majLe:nowISO(), par:S.uid, parNom:compte().nom, validation:{statut:"Soumises"}, historique: ajoute(ND?.historique, trace(ND?.validation?.statut==="Retournées" ? `Notes corrigées et soumises à nouveau (${nb} modification(s))` : `Notes soumises (${nb} modification(s))`, "Soumises"))}), "Notes soumises au Responsable Formation")) log("notes", `Notes ${code} soumises pour validation (${Object.keys(cur).length} apprenants)`, ["formation"]);
 }
 
 /* ---- Rapports de tutorat : vue Présidence / Commission Formation ---- */
@@ -2050,9 +2067,10 @@ function etatSuivi(sem){
 function etatAccomp(){
   const D = S.dossiers;
   const ouverts = D.filter(d=>!["Résolu","Clos"].includes(d.statut));
+  const retournes = D.filter(d=>d.statut==="Retourné");
   const actions = D.flatMap(d=>d.actions||[]);
   return {D, ouverts, suivis: new Set(ouverts.map(d=>d.matricule)).size, identifiees: D.length, engagees: actions.length, terminees: actions.filter(a=>a.statut==="Terminée").length,
-    nonResolues: ouverts.length, intervention: D.filter(d=>d.statut==="Intervention requise"), sansAction: ouverts.filter(d=>!(d.actions||[]).length)};
+    nonResolues: ouverts.length, retournes, intervention: D.filter(d=>d.statut==="Intervention requise"), sansAction: ouverts.filter(d=>!(d.actions||[]).length)};
 }
 /* Difficultés récurrentes : étudiants signalés au moins deux semaines différentes */
 function recurrents(){
@@ -2071,8 +2089,14 @@ function alertesSuivi(){
   if (E.sem && E.nonSuivis.length) add("warn", `${E.nonSuivis.length} étudiant(s) non suivi(s) la ${semLib(E.sem)}`, E.nonSuivis.slice(0,5).map(s=>s.nom).join(", ")+(E.nonSuivis.length>5?"…":""), ["tuteurs","accompagnement","secretaire"], "#suivi");
   if (E.sansTuteur.length && S.affectations.length) add("info", `${E.sansTuteur.length} apprenant(s) sans tuteur affecté`, E.sansTuteur.slice(0,5).map(s=>s.nom).join(", "), ["tuteurs"], "#suivi");
   if (X.intervention.length) add("bad", `${X.intervention.length} suivi(s) nécessitant une intervention`, X.intervention.slice(0,4).map(d=>`${d.nom} : ${d.difficulte}`).join(" · "), ["accompagnement","secretaire","president","tuteurs"], "#suivi");
-  const signales = X.ouverts.filter(d=>d.priorite==="Haute");
-  if (signales.length) add("warn", `${signales.length} étudiant(s) signalé(s) en difficulté`, signales.slice(0,4).map(d=>d.nom).join(", "), ["accompagnement","secretaire","president"], "#suivi");
+  const signales = new Set([...E.difficulte, ...X.ouverts.map(d=>d.matricule)]);
+  if (signales.size) add("warn", `${signales.size} étudiant(s) signalé(s) en difficulté`, [...signales].slice(0,5).map(nomEtu).join(", "), ["accompagnement","secretaire","president","tuteurs"], "#suivi");
+  if (E.sem && E.valides) add("info", `${E.valides} rapport(s) validé(s) · ${semLib(E.sem)}`, `${E.valides} sur ${E.attendus} attendus`, ["tuteurs","secretaire","president"], "#suivi");
+  if (X.retournes.length) add("warn", `${X.retournes.length} signalement(s) retourné(s) pour correction`, X.retournes.map(d=>d.nom).join(", "), ["tuteurs","formation","accompagnement"], "#suivi");
+  const seaAttente = S.seances.filter(x=>(x.validation?.statut||"Soumise")==="Soumise").length;
+  if (seaAttente) add("info", `${seaAttente} séance(s) en attente de validation`, "Suivi pédagogique · Présences", ["formation"], "#pedagogie");
+  const notesAttente = S.notes.filter(n=>n.validation?.statut==="Soumises");
+  if (notesAttente.length) add("info", `Notes à valider : ${notesAttente.map(n=>n.id).join(", ")}`, "Suivi pédagogique · Notes", ["formation"], "#pedagogie");
   const rr = S.rapportsResp.filter(r=>r.statut==="Transmis");
   if (rr.length) add("info", `${rr.length} rapport(s) de responsable à examiner`, rr.map(r=>r.auteurNom).join(", "), ["secretaire"], "#synthese");
   const syn = S.syntheses.filter(s=>s.statut==="Transmise" && !s.luLe);
@@ -2239,8 +2263,8 @@ function exploiterHebdo(r){
 
 /* ---------- Dossiers d'accompagnement ---------- */
 const DOMAINES_ACC = ["Pédagogique","Tutorat","Assiduité","Méthodologie et organisation","Numérique et plateformes","Personnel ou social","Autre"];
-const STATUTS_DOS = ["Ouvert","En cours","Intervention requise","Résolu","Clos"];
-const pillDos = st => `<span class="pill ${st==="Intervention requise"?"bad":st==="Résolu"||st==="Clos"?"ok":st==="En cours"?"":"warn"}">${esc(st)}</span>`;
+const STATUTS_DOS = ["Ouvert","Retourné","En cours","Intervention requise","Résolu","Clos"];
+const pillDos = st => `<span class="pill ${st==="Intervention requise"||st==="Retourné"?"bad":st==="Résolu"||st==="Clos"?"ok":st==="En cours"?"":"warn"}">${esc(st)}</span>`;
 function formDossier(init){
   const d = init || {};
   openSheet(`<h2>${d.id?"Modifier le suivi":"Ouvrir un suivi d'accompagnement"}</h2>
@@ -2273,8 +2297,11 @@ function ficheDossier(id){
       ${acts.length?`<div class="plist">${acts.map(a=>`<div class="prow"><span><b class="small">${esc(a.libelle)}</b><br><span class="small muted">${a.echeance?`échéance ${dFR(a.echeance)} · `:""}${esc(a.par)}${a.termineLe?` · terminée le ${dFR(a.termineLe.slice(0,10))}`:""}</span></span>${a.statut==="Terminée"?'<span class="pill ok">Terminée</span>':gere?`<button class="btn sm" data-afin="${esc(a.id)}">Terminer</button>`:'<span class="pill warn">À faire</span>'}</div>`).join("")}</div>`:`<div class="empty">Aucune action engagée.</div>`}
       ${gere&&ouvert?`<div class="g2"><input type="text" id="a_l" maxlength="200" placeholder="Nouvelle action (ex. : entretien individuel)"><input type="date" id="a_e" min="${today()}"></div><div class="row"><button class="btn sm" id="a_ok">Ajouter l'action</button></div>`:""}
     </div>
+    ${d.statut==="Retourné"?`<div class="banner">Retourné pour correction par ${esc(d.retour?.par||"")} : ${esc(d.retour?.obs||"")}</div>`:""}
+    ${d.statut==="Retourné" && d.creeParEmail===S.email?`<label class="f" for="do_df">Difficulté (à compléter)<textarea id="do_df" maxlength="1000">${esc(d.difficulte)}</textarea></label><div class="row"><button class="btn vert" id="do_rs">Compléter et renvoyer</button></div>`:""}
     ${gere||sg?`<label class="f" for="do_o">Observations<textarea id="do_o" maxlength="1000"></textarea></label>`:""}
     <div class="row">
+      ${gere&&ouvert&&d.statut==="Ouvert"&&d.creeParEmail&&d.creeParEmail!==S.email?`<button class="btn" id="do_ret">Retourner pour correction</button>`:""}
       ${gere&&ouvert?`<button class="btn" data-dst="En cours">En cours</button><button class="btn danger" data-dst="Intervention requise">Intervention requise</button><button class="btn vert" data-dst="Résolu">Valider le suivi (résolu)</button>`:""}
       ${gere&&d.statut==="Résolu"?`<button class="btn" data-dst="En cours">Rouvrir</button><button class="btn" data-dst="Clos">Clore</button>`:""}
       ${sg&&R!=="accompagnement"?`<button class="btn vert" id="do_ctl">Contrôlé</button><button class="btn" id="do_dem">Demander une explication</button>`:""}
@@ -2286,6 +2313,8 @@ function ficheDossier(id){
   $("#sheet").querySelectorAll("[data-dst]").forEach(b => b.onclick = () => { const st = b.dataset.dst; if (st==="Résolu" && acts.some(a=>a.statut!=="Terminée")) return toast("Terminez d'abord toutes les actions engagées."); maj({statut:st, ...(st==="Résolu"?{validation:{par:compte().nom, fonction:fonctionDe(role()), le:nowISO(), obs:obs()}}:{})}, `Suivi : ${st}`, st==="Résolu"?"Suivi validé (résolu)":`Statut : ${st}`, st, st==="Intervention requise"?["president","secretaire"]:["secretaire"]); });
   $("#a_ok") && ($("#a_ok").onclick = () => { const l = $("#a_l").value.trim(); if (l.length<3) return toast("Décrivez l'action."); const a = {id:"A"+Date.now().toString(36), libelle:l, echeance:$("#a_e").value||"", statut:"À faire", par:compte().nom, le:nowISO()}; maj({actions:[...acts, a], ...(d.statut==="Ouvert"?{statut:"En cours"}:{})}, "Action ajoutée", `Action engagée : ${l}`, d.statut==="Ouvert"?"En cours":d.statut, ["secretaire"]); });
   $("#sheet").querySelectorAll("[data-afin]").forEach(b => b.onclick = () => { const L = acts.map(a=>a.id===b.dataset.afin?{...a, statut:"Terminée", termineLe:nowISO()}:a); maj({actions:L}, "Action terminée", `Action terminée : ${acts.find(a=>a.id===b.dataset.afin)?.libelle}`, d.statut, ["secretaire"]); });
+  $("#do_ret") && ($("#do_ret").onclick = () => { if (obs().length<5) return toast("Précisez ce qu'il faut compléter."); maj({statut:"Retourné", retour:{par:compte().nom, fonction:fonctionDe(role()), le:nowISO(), obs:obs()}}, "Signalement retourné à son auteur", "Retourné pour correction", "Retourné", Object.values(S.comptes).filter(c=>c.email===d.creeParEmail && c.uid).map(c=>"u:"+c.uid)); });
+  $("#do_rs") && ($("#do_rs").onclick = async () => { const df = $("#do_df").value.trim(); if (df.length<5) return toast("Décrivez la difficulté."); if (await write(() => S.db.doc("dossiers/"+id).update({difficulte:df, statut:"Ouvert", historique: ajoute(d.historique, trace("Signalement complété et renvoyé", "Ouvert", df))}), "Signalement renvoyé")){ log("dossier", `Signalement complété pour ${d.nom}`, ["accompagnement"]); closeSheet(); } });
   $("#do_ctl") && ($("#do_ctl").onclick = () => maj({controle:{par:compte().nom, fonction:fonctionDe(role()), le:nowISO(), obs:obs(), demande:false}}, "Contrôle enregistré", "Contrôle du Secrétariat général", d.statut, ["accompagnement"]));
   $("#do_dem") && ($("#do_dem").onclick = () => { if (obs().length<5) return toast("Précisez l'explication demandée."); maj({controle:{par:compte().nom, fonction:fonctionDe(role()), le:nowISO(), obs:obs(), demande:true}}, "Explication demandée", "Explication demandée par le Secrétariat général", d.statut, ["accompagnement"]); });
 }
@@ -2304,10 +2333,10 @@ function vSuivi(){
   }
   if (sub==="dossiers"){
     const f = S.df; let L = X.D.slice().sort((a,b)=>(a.statut==="Intervention requise"?-1:0)-(b.statut==="Intervention requise"?-1:0) || String(b.creeLe).localeCompare(String(a.creeLe)));
-    if (f.st==="ouverts") L = L.filter(d=>!["Résolu","Clos"].includes(d.statut)); else if (f.st) L = L.filter(d=>d.statut===f.st);
+    if (f.st==="ouverts") L = L.filter(d=>!["Résolu","Clos"].includes(d.statut)); else if (f.st==="miens") L = L.filter(d=>d.creeParEmail===S.email); else if (f.st) L = L.filter(d=>d.statut===f.st);
     const peutOuvrir = ["accompagnement","tuteurs","formation"].includes(R) || presidence();
     body = `<div class="kpis">${kpi(X.suivis,"étudiants suivis")}${kpi(X.identifiees,"difficultés identifiées")}${kpi(`${X.terminees}/${X.engagees}`,"actions terminées / engagées","g")}${kpi(X.nonResolues,"situations non résolues", X.intervention.length?"bad":"")}</div>
-    <div class="spread"><select id="dfS" aria-label="Statut" style="max-width:260px">${opts([["ouverts","Suivis non résolus"],...STATUTS_DOS.map(s=>[s,s])], f.st, "Tous les suivis")}</select>${peutOuvrir?`<button class="btn primary" id="newDos">${ICO.nouveau} ${R==="accompagnement"||presidence()?"Ouvrir un suivi":"Signaler un étudiant"}</button>`:""}</div>
+    <div class="spread"><select id="dfS" aria-label="Statut" style="max-width:260px">${opts([["ouverts","Suivis non résolus"],["miens","Mes signalements"],...STATUTS_DOS.map(s=>[s,s])], f.st, "Tous les suivis")}</select>${peutOuvrir?`<button class="btn primary" id="newDos">${ICO.nouveau} ${R==="accompagnement"||presidence()?"Ouvrir un suivi":"Signaler un étudiant"}</button>`:""}</div>
     ${L.length?`<div class="clist">${L.map(d=>`<button class="citem ${d.statut==="Intervention requise"?"urg":["Résolu","Clos"].includes(d.statut)?"done":d.priorite==="Haute"?"late":""}" data-dos="${esc(d.id)}"><span class="t">${esc(d.nom)} ${pillDos(d.statut)}${d.priorite==="Haute"?' <span class="pill bad">Priorité haute</span>':""}</span><span class="small">${esc(d.difficulte.slice(0,140))}</span><span class="m"><span>${esc(d.domaine)}</span><span>· ${(d.actions||[]).filter(a=>a.statut==="Terminée").length}/${(d.actions||[]).length} action(s)</span><span>· ouvert le ${dFR(String(d.creeLe).slice(0,10))}</span>${d.controle?'<span class="pill ok">Contrôlé</span>':""}</span></button>`).join("")}</div>`:`<div class="empty">Aucun suivi pour ce filtre.</div>`}`;
   }
   if (sub==="etudiants"){
@@ -2451,16 +2480,22 @@ function ficheFormation(code){
 /* ---------- Validation du suivi pédagogique (séances) ---------- */
 function validerSeance(id, ok){
   const se = S.seances.find(s=>s.id===id); if (!se) return;
+  const act = ok===true ? "v" : ok===false ? "r" : ok;
   const v = Object.values(se.presences||{}).filter(Boolean);
-  openSheet(`<h2>${ok?"Valider":"Retourner"} la séance</h2><p class="small muted">${esc(se.formation)} · ${esc(nomForm(se.formation))} · ${dLong(se.date)} · ${v.filter(x=>x==="P"||x==="R").length}/${v.length} présents · pointée par ${esc(se.parNom||"")}</p>
-    <label class="f" for="sv_o">${ok?"Observation (facultative)":"Motif du retour au formateur"}<textarea id="sv_o" maxlength="600"></textarea></label>
-    <div class="row"><button class="btn ${ok?"vert":"primary"}" id="sv_ok">${ok?"Valider la séance":"Retourner au formateur"}</button><button class="btn ghost" data-close>Annuler</button></div>
+  const titres = {v:"Valider la séance", r:"Retourner la séance", o:"Rouvrir pour rectification", c:"Contrôle du Secrétariat général"};
+  openSheet(`<h2>${titres[act]}</h2><p class="small muted">${esc(se.formation)} · ${esc(nomForm(se.formation))} · ${dLong(se.date)} · ${v.filter(x=>x==="P"||x==="R").length}/${v.length} présents · pointée par ${esc(se.parNom||"")}</p>
+    <label class="f" for="sv_o">${act==="v"||act==="c"?"Observation (facultative)":"Motif (obligatoire)"}<textarea id="sv_o" maxlength="600"></textarea></label>
+    <div class="row"><button class="btn ${act==="v"||act==="c"?"vert":"primary"}" id="sv_ok">Confirmer</button>${act!=="c"?`<button class="btn danger" id="sv_sig">Signaler une intervention</button>`:""}<button class="btn ghost" data-close>Annuler</button></div>
     <details class="card"><summary>Historique</summary>${histoHTML(se.historique)}</details>`);
+  $("#sv_sig") && ($("#sv_sig").onclick = () => formDossier({priorite:"Haute", statut:"Intervention requise", domaine:"Assiduité", difficulte:$("#sv_o").value.trim(), source:{type:"seance", ref:id, lib:`Séance ${se.formation} du ${dFR(se.date)}`}}));
   $("#sv_ok").onclick = async () => {
-    const o = $("#sv_o").value.trim(); if (!ok && o.length<3) return toast("Indiquez le motif du retour.");
-    const st = ok ? "Validée" : "Retournée";
-    if (await write(()=>S.db.doc("seances/"+id).update({validation:{statut:st, par:compte().nom, fonction:fonctionDe(role()), le:nowISO(), obs:o}, historique: ajoute(se.historique, trace(`Séance ${st.toLowerCase()}`, st, o))}), `Séance ${st.toLowerCase()}`)){
-      const u = Object.values(S.comptes).find(c=>c.uid===se.par)?.uid; log("seance_val", `Séance ${se.formation} du ${dFR(se.date)} ${st.toLowerCase()}${o?` : ${o}`:""}`, u?["u:"+u, "secretaire"]:["secretaire"]); closeSheet();
+    const o = $("#sv_o").value.trim(); if ((act==="r"||act==="o") && o.length<3) return toast("Indiquez le motif.");
+    const sig = {par:compte().nom, fonction:fonctionDe(role()), le:nowISO(), obs:o};
+    const st = {v:"Validée", r:"Retournée", o:"Retournée"}[act];
+    const lib = {v:"Séance validée", r:"Séance retournée pour correction", o:"Séance rouverte pour rectification", c:"Contrôle du Secrétariat général"}[act];
+    const data = act==="c" ? {controle:sig} : {validation:{...sig, statut:st}};
+    if (await write(()=>S.db.doc("seances/"+id).update({...data, historique: ajoute(se.historique, trace(lib, st || se.validation?.statut || "", o))}), lib)){
+      const u = Object.values(S.comptes).find(c=>c.uid===se.par)?.uid; log("seance_val", `Séance ${se.formation} du ${dFR(se.date)} : ${lib.toLowerCase()}${o?` · ${o}`:""}`, act==="c" ? ["formation"] : u?["u:"+u, "secretaire"]:["secretaire"]); closeSheet();
     }
   };
 }
@@ -2607,10 +2642,25 @@ function vDashAccomp(){
 function blocSuiviDirection(){
   const E = etatSuivi(), X = etatAccomp(), syn = S.syntheses.filter(s=>s.statut==="Transmise").sort((a,b)=>b.semaine.localeCompare(a.semaine))[0];
   const actions = S.dossiers.flatMap(d=>(d.actions||[]).filter(a=>a.statut!=="Terminée").map(a=>({...a, nom:d.nom})));
+  const suivis = new Set([...S.rapportsHebdo.filter(r=>r.semaine===E.sem && r.statut!=="Brouillon").flatMap(r=>r.etudiants||[]), ...X.ouverts.map(d=>d.matricule)]);
+  const parDomaine = {}; X.ouverts.forEach(d => { (parDomaine[d.domaine] ||= new Set()).add(d.matricule); });
+  const sem7 = addJ(today(), -7), seaS = S.seances.filter(x=>x.date>=sem7), resolus = X.D.filter(d=>["Résolu","Clos"].includes(d.statut)).length;
+  const consEnCours = S.consignes.filter(c=>!["Faite","Annulée"].includes(c.statut));
+  const difficultes = S.rapportsHebdo.filter(r=>r.semaine===E.sem && (r.difficultes||"").trim().length>2);
+  const recos = [
+    ...(syn?.recommandations ? [{de:"Secrétariat général", t:syn.recommandations}] : []),
+    ...S.rapportsHebdo.filter(r=>r.semaine===E.sem && r.recommandations).map(r=>({de:r.tuteurNom, t:r.recommandations})),
+    ...S.rapportsResp.filter(r=>r.statut!=="Complément demandé").sort((a,b)=>String(b.creeLe).localeCompare(String(a.creeLe))).slice(0,2).map(r=>({de:`${r.auteurNom} (${fonctionDe(r.fonction)})`, t:r.contenu}))
+  ].slice(0,5);
   return `<h3>Suivi des étudiants${E.sem?` · ${esc(semLib(E.sem))}`:""}</h3>
-  <div class="kpis">${kpi(`${E.soumis} / ${E.attendus}`,"rapports de tuteurs soumis", E.retard?"warn":"g")}${kpi(E.valides,"rapports validés")}${kpi(X.suivis,"étudiants accompagnés")}${kpi(X.intervention.length,"interventions requises", X.intervention.length?"bad":"g")}</div>
-  <div class="cols"><div class="card"><div class="spread"><h3>Dernière synthèse du Secrétariat général</h3><a class="btn ghost" href="#synthese">Toutes</a></div>${syn?`<button class="citem" data-syn="${esc(syn.id)}"><span class="t">${esc(semLib(syn.semaine))} ${syn.luLe?"":'<span class="pill warn">Non lue</span>'}</span><span class="small">${esc((syn.faits||"").slice(0,180))}</span>${syn.recommandations?`<span class="small"><b>Recommandations :</b> ${esc(syn.recommandations.slice(0,160))}</span>`:""}</button>`:`<div class="empty">Aucune synthèse transmise.</div>`}</div>
-  <div class="card"><h3>Actions restant à exécuter (${actions.length})</h3>${actions.length?`<div class="plist">${actions.slice(0,6).map(a=>`<div class="prow"><span class="small"><b>${esc(a.nom)}</b> · ${esc(a.libelle)}</span><span class="small muted">${a.echeance?dFR(a.echeance):""}</span></div>`).join("")}</div>`:`<div class="empty">Aucune action d'accompagnement en cours.</div>`}</div></div>`;
+  <div class="kpis">${kpi(suivis.size,"étudiants suivis")}${kpi(`${E.soumis} / ${E.attendus}`,"rapports de tuteurs soumis", E.retard?"warn":"g")}${kpi(`${seaS.length} · ${E.soumis}`,"séances (7 j) · rapports de tutorat")}${kpi(difficultes.length + E.difficulte.size,"difficultés signalées", E.difficulte.size?"warn":"")}${kpi(`${resolus} / ${X.D.length}`,"suivis résolus","g")}${(()=>{ const n = X.ouverts.filter(d=>d.statut==="Intervention requise"||d.priorite==="Haute").length; return kpi(n,"situations nécessitant une attention", n?"bad":"g"); })()}${kpi(actions.length + consEnCours.length,"actions restant à exécuter")}${kpi(E.controles,"rapports contrôlés par le SG")}</div>
+  <div class="cols">
+    <div class="card"><h3>Étudiants accompagnés par domaine</h3>${Object.keys(parDomaine).length?`<div class="plist">${Object.entries(parDomaine).sort((a,b)=>b[1].size-a[1].size).map(([k,v])=>`<div class="prow"><span>${esc(k)}</span><b>${v.size}</b></div>`).join("")}</div>`:`<div class="empty">Aucun accompagnement en cours.</div>`}
+      <h3>Situations nécessitant une attention</h3>${X.intervention.length || X.ouverts.some(d=>d.priorite==="Haute")?`<div class="clist">${X.ouverts.filter(d=>d.statut==="Intervention requise"||d.priorite==="Haute").slice(0,4).map(d=>`<button class="citem urg" data-dos="${esc(d.id)}"><span class="t">${esc(d.nom)} ${pillDos(d.statut)}</span><span class="small">${esc(d.difficulte.slice(0,110))}</span></button>`).join("")}</div>`:`<div class="empty">Aucune situation prioritaire.</div>`}</div>
+    <div class="card"><div class="spread"><h3>Dernière synthèse du Secrétariat général</h3><a class="btn ghost" href="#synthese">Toutes</a></div>${syn?`<button class="citem" data-syn="${esc(syn.id)}"><span class="t">${esc(semLib(syn.semaine))} ${syn.luLe?"":'<span class="pill warn">Non lue</span>'}${syn.orientations?' <span class="pill ok">Orientations données</span>':""}</span><span class="small">${esc((syn.faits||"").slice(0,180))}</span></button>`:`<div class="empty">Aucune synthèse transmise.</div>`}
+      <h3>Recommandations des responsables</h3>${recos.length?`<div class="plist">${recos.map(r=>`<div class="prow"><span class="small"><b>${esc(r.de)}</b><br>${esc(String(r.t).slice(0,180))}${String(r.t).length>180?"…":""}</span></div>`).join("")}</div>`:`<div class="empty">Aucune recommandation transmise.</div>`}
+      <h3>Actions restant à exécuter (${actions.length + consEnCours.length})</h3>${actions.length||consEnCours.length?`<div class="plist">${[...consEnCours.slice(0,3).map(c=>`<div class="prow"><span class="small"><b>Consigne</b> · ${esc(c.titre)} → ${esc(c.destNom)}</span><span class="small muted">${dFR(c.echeance)}</span></div>`), ...actions.slice(0,4).map(a=>`<div class="prow"><span class="small"><b>${esc(a.nom)}</b> · ${esc(a.libelle)}</span><span class="small muted">${a.echeance?dFR(a.echeance):""}</span></div>`)].join("")}</div>`:`<div class="empty">Rien en attente.</div>`}</div>
+  </div>`;
 }
 
 /* ---------- Recherche globale ---------- */
@@ -2761,6 +2811,27 @@ function finRendu(){
   });
 }
 setTimeout(() => { const sp = $("#splash"); if (sp){ sp.classList.add("out"); setTimeout(()=>sp.remove(), 600); } }, 6000);
+
+
+/* Notes : validation par le Responsable Formation ; les messages aux étudiants partent après validation */
+function decisionNotes(code, act){
+  const ND = S.notes.find(n=>n.id===code); if (!ND) return;
+  const titres = {v:"Valider les notes", r:"Retourner les notes au formateur", o:"Rouvrir pour rectification", c:"Contrôle du Secrétariat général"};
+  openSheet(`<h2>${titres[act]}</h2><p class="small muted">${esc(code)} · ${esc(nomForm(code))} · ${Object.keys(ND.notes||{}).length} note(s)</p>
+    <label class="f" for="nd_o">${act==="v"||act==="c"?"Observation (facultative)":"Motif (obligatoire)"}<textarea id="nd_o" maxlength="600"></textarea></label>
+    <div class="row"><button class="btn ${act==="v"||act==="c"?"vert":"primary"}" id="nd_ok">Confirmer</button><button class="btn ghost" data-close>Annuler</button></div>`);
+  $("#nd_ok").onclick = async () => {
+    const o = $("#nd_o").value.trim(); if ((act==="r"||act==="o") && o.length<3) return toast("Indiquez le motif.");
+    const sig = {par:compte().nom, fonction:fonctionDe(role()), le:nowISO(), obs:o};
+    const data = act==="c" ? {controle:sig} : {validation:{...sig, statut: act==="v" ? "Validées" : "Retournées"}};
+    const lib = {v:"Notes validées", r:"Notes retournées pour correction", o:"Notes rouvertes pour rectification", c:"Contrôle du Secrétariat général"}[act];
+    if (await write(()=>S.db.doc("notes/"+code).update({...data, historique: ajoute(ND.historique, trace(lib, act==="c" ? (ND.validation?.statut||"") : data.validation.statut, o))}), lib)){
+      log("notes", `${code} : ${lib.toLowerCase()}${o?` · ${o}`:""}`, act==="c" ? ["formation"] : ["secretaire","pedagogie"]);
+      if (act==="v"){ const L = Object.entries(ND.notes||{}).map(([k,v])=>({matricule:k, ref:`${code}|${v}`})); preparerMessages("note", L).then(M => M.length && toast(`${M.length} message(s) de note préparé(s) dans « WhatsApp étudiants »`)); }
+      closeSheet();
+    }
+  };
+}
 
 /* ======== Données en direct ======== */
 function sub(path, key, fn, q){

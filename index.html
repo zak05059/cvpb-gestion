@@ -513,6 +513,15 @@ main.anim .kpis > *,main.anim .rings > *,main.anim .clist > *{animation:rise .45
 <nav class="bnav" id="bnav" aria-label="Navigation" hidden></nav>
 <div class="toast" id="toast" role="status" aria-live="polite"></div>
 <div id="print"></div>
-<script type="module" src="app.js"></script>
+<script>
+/* Filet de sécurité : l'écran de démarrage ne reste jamais bloqué et toute erreur de chargement est affichée */
+(function(){
+  function montre(msg){ var sp=document.getElementById("splash"); if(!sp) return; var p=sp.querySelector("p"); if(p&&msg){ p.textContent="Erreur : "+msg+" · rechargez avec Ctrl + Maj + R"; p.style.color="#ff9a92"; } setTimeout(function(){ sp.classList.add("out"); setTimeout(function(){ sp.remove(); }, 600); }, msg?4000:0); }
+  window.addEventListener("error", function(e){ var t=e.target; if (t && t!==window){ if (t.tagName!=="SCRIPT") return; montre("fichier " + (t.src||"").split("/").pop() + " introuvable"); return; } montre(e.message); }, true);
+  window.addEventListener("unhandledrejection", function(e){ montre((e.reason && e.reason.message) || String(e.reason)); });
+  setTimeout(function(){ montre(""); }, 8000);
+})();
+</script>
+<script type="module" src="app.js?v=10"></script>
 </body>
 </html>
