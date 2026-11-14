@@ -110,7 +110,12 @@ function calculer(D, ref){
     else if (arriere > 0){ situation = "En retard"; niv = "bad"; }
     else if (resteCourant > 0){ situation = "Mois en cours"; niv = "info"; }
     else { situation = "À jour"; niv = "ok"; }
-    etu[s.matricule] = {inscPayee, inscOk, tshirtVendu, imputation, cotiDirect, pool, parMois, avance, dueEchus, arriere, resteCourant, situation, niv, totalVerse: L.reduce((a,e)=>a+e.montant,0), versements: L};
+    /* Paiement échelonné : une mensualité peut être réglée en plusieurs tranches, affectées au plus ancien mois non soldé */
+    const prochainM = mois.find(m => (parMois[m.code]||0) < P.mensualite);
+    const prochain = prochainM ? {code:prochainM.code, libelle:prochainM.libelle, paye:parMois[prochainM.code]||0, reste:P.mensualite-(parMois[prochainM.code]||0)} : null;
+    const nbTranches = L.filter(e=>e.nature===N_COTI && e.montant < P.mensualite).length;
+    const enEchelonnement = mois.some(m => { const v = parMois[m.code]||0; return v>0 && v<P.mensualite; }) || (inscPayee>0 && !inscOk);
+    etu[s.matricule] = {prochain, nbTranches, enEchelonnement, inscPayee, inscOk, tshirtVendu, imputation, cotiDirect, pool, parMois, avance, dueEchus, arriere, resteCourant, situation, niv, totalVerse: L.reduce((a,e)=>a+e.montant,0), versements: L};
   }
 
   /* --- Totaux registre --- */
@@ -655,7 +660,7 @@ const codeSpec = s => { const m = String(s||"").match(/\(([^)]+)\)\s*$/); return
 function ficheEtu(mat){
   const s = etuBy(mat); if (!s) return;
   const C = S.C, e = C.etu[mat], p = C.peda[mat], fin = can("fin.voir");
-  const moisCells = C.mois.map(m => { const v = e.parMois[m.code]||0; const st = v>=P().mensualite?"ok": m.fin<C.today?(v?"part":"due"): (m.debut<=C.today?"cur":(v?"part":"fut")); return `<div class="row" style="justify-content:space-between"><span class="small">${esc(m.libelle)}</span><span class="cell ${st}">${v>=P().mensualite?"Soldé":v?F(v):(st==="fut"?"À venir":"0")}</span></div>`; }).join("");
+  const moisCells = C.mois.map(m => { const v = e.parMois[m.code]||0; const st = v>=P().mensualite?"ok": m.fin<C.today?(v?"part":"due"): (m.debut<=C.today?"cur":(v?"part":"fut")); return `<div class="row" style="justify-content:space-between"><span class="small">${esc(m.libelle)}</span><span class="cell ${st}">${v>=P().mensualite?"Soldé":v?`${F(v)} / ${F(P().mensualite)} · reste ${F(P().mensualite-v)}`:(st==="fut"?"À venir":"0")}</span></div>`; }).join("");
   const wa = S.prive[mat]?.tel && waLink(S.prive[mat].tel, relanceMsg(s, e));
   openSheet(`<div class="spread"><div><h2>${esc(s.nom)}</h2><p class="small muted num">${esc(s.matricule)} · ${esc(s.niveau)} · ${esc(s.specialite)}</p></div>${fin?`<span class="pill ${e.niv}">${esc(e.situation)}</span>`:""}</div>
     <dl class="dl"><dt>Académie</dt><dd>${s.academie?"Inscrit(e)":"Non inscrit(e)"}</dd><dt>Statut</dt><dd>${esc(s.statut||"Actif")}</dd>${can("tel.voir")?`<dt>Téléphone</dt><dd class="num">${esc(S.prive[mat]?.tel||"Non renseigné")}</dd>`:""}</dl>
@@ -746,6 +751,30 @@ function vRegistre(){
   </tbody></table></div>`;
 }
 const moisLib = c => S.C.mois.find(m=>m.code===c)?.libelle || c || "—";
+/* Échelonnement : décrit comment un montant sera affecté (tranche, mois soldés, reste) */
+function trancheDe(e, na, mt){
+  if (na===N_INSC) return mt < Math.max(0, P().inscription - e.inscPayee);
+  if (na===N_COTI) return !!e.prochain && mt < e.prochain.reste;
+  return false;
+}
+function affectationTxt(e, na, mt){
+  const mens = P().mensualite;
+  if (na===N_INSC){
+    const reste = Math.max(0, P().inscription - e.inscPayee);
+    if (!reste) return `Inscription déjà soldée : ce montant s'ajoutera aux cotisations.`;
+    return mt < reste ? `<b>Paiement échelonné de l'inscription</b> : il restera ${F(reste-mt)} FCFA à payer.` : `Inscription soldée${mt>reste?` ; ${F(mt-reste)} FCFA imputés aux cotisations`:""}.`;
+  }
+  if (na!==N_COTI) return "";
+  const C = S.C; let reste = mt; const L = [];
+  for (const m of C.mois){
+    const deja = e.parMois[m.code]||0, manque = mens - deja; if (manque <= 0) continue;
+    const apport = Math.min(manque, reste); if (apport <= 0) break;
+    L.push(apport === manque ? `${esc(m.libelle)} soldé${deja?` (complément de ${F(apport)})`:""}` : `<b>tranche de ${F(apport)} FCFA sur ${esc(m.libelle)}</b> (reste ${F(manque-apport)} FCFA à payer)`);
+    reste -= apport;
+  }
+  if (reste > 0) L.push(`${F(reste)} FCFA d'avance`);
+  return (L.length && trancheDe(e, na, mt) ? "Paiement échelonné : " : "Affectation : ") + L.join(" · ");
+}
 function formEnc(matInit){
   const C = S.C, c = compte();
   const encs = [...new Set([...(P().encaisseurs||[]), c.nom])].filter(Boolean);
@@ -758,29 +787,38 @@ function formEnc(matInit){
     <div class="g2">
       <label class="f" for="n_na">Nature<select id="n_na">${opts(NATURES)}</select></label>
       <label class="f" for="n_mo">Mois concerné<select id="n_mo">${opts(C.mois.map(m=>[m.code,m.libelle]), C.courant?.code, "—")}</select></label>
-      <label class="f" for="n_mt">Montant encaissé (FCFA)<input type="number" id="n_mt" min="1" step="1" required></label>
+      <label class="f" for="n_mt">Montant encaissé (FCFA)<input type="number" id="n_mt" min="1" step="1" required><span class="hint">Paiement échelonné accepté : un montant inférieur à la mensualité (${F(P().mensualite)} FCFA) est enregistré comme une tranche.</span></label>
       <label class="f" for="n_d">Date<input type="date" id="n_d" value="${today()}" max="${today()}" required></label>
       <label class="f" for="n_md">Mode de paiement<select id="n_md">${opts(P().modes)}</select></label>
       <label class="f" for="n_rf">Référence de la transaction<input type="text" id="n_rf" maxlength="40" placeholder="Ex. WV-NV-014"></label>
       <label class="f" for="n_by">Encaissé par<select id="n_by">${opts(encs, c.nom)}</select></label>
       <label class="f" for="n_ob">Observations<input type="text" id="n_ob" maxlength="200"></label>
     </div>
+    <div id="n_prev"></div>
     <div class="row"><button class="btn primary" type="submit">Enregistrer l'encaissement</button><button class="btn" type="button" data-close>Annuler</button></div>
   </form>`);
   const matOf = () => { const v = $("#n_m").value.trim(); const m = v.split("·")[0].trim().toUpperCase(); return etuBy(m) ? m : null; };
   const suggest = () => {
     const m = matOf(), e = m && C.etu[m], na = $("#n_na").value;
     $("#n_pyw").hidden = !!m;
-    $("#n_sit").innerHTML = e ? `<div class="banner" style="border-color:var(--line);background:var(--violet-soft)">Inscription ${e.inscOk?"soldée":"à compléter : reste "+F(P().inscription-e.inscPayee)+" FCFA"} · arriéré ${F(e.arriere)} FCFA${C.courant?` · reste ${esc(C.courant.libelle)} : ${F(e.resteCourant)} FCFA`:""}</div>` : ($("#n_m").value.trim()?`<div class="banner">Étudiant introuvable : choisissez dans la liste ou laissez vide pour un payeur hors liste.</div>`:"");
+    $("#n_sit").innerHTML = e ? `<div class="banner" style="border-color:var(--line);background:var(--violet-soft)">Inscription ${e.inscOk?"soldée":"à compléter : reste "+F(P().inscription-e.inscPayee)+" FCFA"} · arriéré ${F(e.arriere)} FCFA${e.prochain?` · prochain mois à solder : <b>${esc(e.prochain.libelle)}</b> (${e.prochain.paye?`${F(e.prochain.paye)} déjà versés, `:""}reste ${F(e.prochain.reste)} FCFA)`:" · toutes les mensualités sont soldées"}</div>` : ($("#n_m").value.trim()?`<div class="banner">Étudiant introuvable : choisissez dans la liste ou laissez vide pour un payeur hors liste.</div>`:"");
     if (!$("#n_mt").dataset.touched){
       let v = "";
       if (na===N_INSC) v = e ? Math.max(0, P().inscription - e.inscPayee) || P().inscription : P().inscription;
-      else if (na===N_COTI) v = e ? (e.arriere + e.resteCourant) || P().mensualite : P().mensualite;
+      else if (na===N_COTI) v = e?.prochain ? e.prochain.reste : P().mensualite;
       else if (na===NATURES[2]) v = P().tshirt;
       $("#n_mt").value = v || "";
     }
+    if (na===N_COTI && e?.prochain && !$("#n_mo").dataset.touched) $("#n_mo").value = e.prochain.code;
+    apercu();
   };
-  $("#n_mt").oninput = () => $("#n_mt").dataset.touched = "1";
+  /* Aperçu de l'affectation : tranche, mois soldé(s), reste à payer */
+  const apercu = () => {
+    const m = matOf(), e = m && C.etu[m], na = $("#n_na").value, mt = Math.round(Number($("#n_mt").value)) || 0;
+    $("#n_prev").innerHTML = e && mt > 0 ? `<div class="banner" style="border-color:var(--line)">${affectationTxt(e, na, mt)}</div>` : "";
+  };
+  $("#n_mt").oninput = () => { $("#n_mt").dataset.touched = "1"; apercu(); };
+  $("#n_mo").onchange = () => { $("#n_mo").dataset.touched = "1"; };
   $("#n_m").oninput = suggest; $("#n_na").onchange = suggest; suggest();
   $("#nf").onsubmit = async ev => {
     ev.preventDefault();
@@ -796,7 +834,7 @@ function formEnc(matInit){
     if (ref && S.encaissements.some(e=>valide(e) && (e.ref||"").trim().toUpperCase()===ref.toUpperCase())){ toast("Cette référence de transaction existe déjà dans le registre."); return; }
     let id;
     const ok = await write(async () => {
-      id = await numero("encaissements", "ENC-", S.encaissements, "num", id => ({num:id, date:$("#n_d").value, matricule:m||"", nom:s?.nom||"", payeur:m?"":payeur, niveau:s?.niveau||"", nature:na, mois:mo, montant, mode:$("#n_md").value, ref, encaissePar:$("#n_by").value, statut:"Valide", obs:$("#n_ob").value.trim(), saisiPar:S.uid, saisiLe:nowISO()}));
+      id = await numero("encaissements", "ENC-", S.encaissements, "num", id => ({num:id, date:$("#n_d").value, matricule:m||"", nom:s?.nom||"", payeur:m?"":payeur, niveau:s?.niveau||"", nature:na, mois:mo, montant, tranche:!!(m && trancheDe(C.etu[m], na, montant)), affectation:m ? affectationTxt(C.etu[m], na, montant).replace(/<[^>]+>/g,"") : "", mode:$("#n_md").value, ref, encaissePar:$("#n_by").value, statut:"Valide", obs:$("#n_ob").value.trim(), saisiPar:S.uid, saisiLe:nowISO()}));
     }, "Encaissement enregistré");
     if (ok){
       log("encaissement", `${id} · ${FC(montant)} · ${na} · ${s?.nom||payeur}`, ["president","tresorerie"], {montant}); closeSheet();
@@ -830,12 +868,13 @@ function vCotisations(){
     <div class="kpi g"><span class="v">${C.courant?pct(attenduCourant?recuCourant/attenduCourant:null):"—"}</span><span class="l">${C.courant?`collecté pour ${esc(C.courant.libelle)} (${F(recuCourant)} / ${F(attenduCourant)})`:"aucun mois de cotisation en cours"}</span></div>
     <div class="kpi ${tot("arriere")?"bad":""}"><span class="v">${F(tot("arriere"))}</span><span class="l">FCFA d'arriérés (mois échus)</span></div>
     <div class="kpi g"><span class="v">${F(tot("pool"))}</span><span class="l">FCFA affectés aux cotisations</span></div>
+    <div class="kpi"><span class="v">${actifs.filter(s=>C.etu[s.matricule].enEchelonnement).length}</span><span class="l">étudiant(s) en paiement échelonné</span></div>
   </div>
   <div class="row"><select id="csit" style="width:auto" aria-label="Situation">${opts(["À jour","Mois en cours","En retard","Inscription incomplète","Aucun paiement","Inactif"], f.situation, "Toutes situations")}</select>
-  <span class="small muted">Règle : l'inscription (${F(P().inscription)} FCFA) comprend le T-shirt (${F(P().tshirt)}) ; tout montant au-delà du T-shirt est imputé aux cotisations, affectées mois après mois. Un mois devient un arriéré une fois terminé.</span></div>
+  <span class="small muted">Règle : l'inscription (${F(P().inscription)} FCFA) comprend le T-shirt (${F(P().tshirt)}) ; tout montant au-delà du T-shirt est imputé aux cotisations, affectées mois après mois. Un mois devient un arriéré une fois terminé. Le paiement échelonné est accepté : chaque tranche complète le plus ancien mois non soldé (case orange = mois payé en partie).</span></div>
   <div class="tablewrap"><table><thead><tr><th>Matricule</th><th>Nom et prénoms</th><th>Inscription</th>${C.mois.map(m=>`<th title="${esc(m.libelle)}">${esc(m.code)}</th>`).join("")}<th class="r">Arriéré</th><th>Situation</th>${tel?"<th></th>":""}</tr></thead><tbody>
   ${L.map(s=>{ const e = C.etu[s.matricule]; return `<tr class="click" data-mat="${esc(s.matricule)}"><td class="num">${esc(s.matricule)}</td><td><b>${esc(s.nom)}</b></td><td>${e.inscOk?'<span class="cell ok">Soldée</span>':e.inscPayee?`<span class="cell part">${F(e.inscPayee)}</span>`:e.tshirtVendu?'<span class="cell part" title="T-shirt acheté hors inscription">T-shirt seul</span>':'<span class="cell due">Non payée</span>'}</td>
-    ${C.mois.map(m=>{ const v = e.parMois[m.code]||0, full = v>=P().mensualite; const st = full?"ok": m.fin<C.today?(v?"part":"due"): m.debut<=C.today?"cur":(v?"part":"fut"); return `<td><span class="cell ${st}">${full?"✓":v?F(v):st==="fut"?"·":"0"}</span></td>`; }).join("")}
+    ${C.mois.map(m=>{ const v = e.parMois[m.code]||0, full = v>=P().mensualite; const st = full?"ok": m.fin<C.today?(v?"part":"due"): m.debut<=C.today?"cur":(v?"part":"fut"); return `<td><span class="cell ${st}" ${v&&!full?`title="${F(v)} / ${F(P().mensualite)} FCFA versés"`:""}>${full?"✓":v?F(v):st==="fut"?"·":"0"}</span></td>`; }).join("")}
     <td class="r" style="color:${e.arriere?"var(--bad)":"inherit"}">${F(e.arriere)}</td><td><span class="pill ${e.niv}">${esc(e.situation)}</span></td>
     ${tel?`<td>${S.prive[s.matricule]?.tel && (e.arriere||e.resteCourant||!e.inscOk) && s.statut!=="Inactif" ?`<a class="btn sm" href="${waLink(S.prive[s.matricule].tel, relanceMsg(s,e))}" target="_blank" rel="noopener" data-stop="1">Relancer</a>`:""}</td>`:""}</tr>`; }).join("")}
   </tbody></table></div>
@@ -1359,7 +1398,7 @@ function formCompte(uid, pre){
   $("#c_ok").onclick = async () => {
     const data = {nom:$("#c_n").value.trim().replace(/\s+/g," "), role:$("#c_r").value, majLe:nowISO()};
     if (!data.nom){ $("#c_err").textContent = "Le nom est obligatoire."; return; }
-    const fonctions = F.filter(f=>FONCTIONS[f.code]).map(f=>({code:f.code, com:FONCTIONS[f.code].bureau ? null : (f.com||null), depuis:f.depuis||today()}));
+    const fonctions = [...new Map(F.filter(f=>FONCTIONS[f.code]).map(f=>({code:f.code, com:FONCTIONS[f.code].bureau ? null : (f.com||null), depuis:f.depuis||today()})).map(f=>[f.code+"|"+(f.com||""), f])).values()];
     const manque = fonctions.find(f=>!FONCTIONS[f.code].bureau && ["RESP_COM","MEMBRE","ENCADREMENT"].includes(f.code) && !f.com);
     if (manque){ $("#c_err").textContent = `Indiquez la commission pour la fonction « ${FONCTIONS[manque.code].t} ».`; return; }
     const coches = [...$("#sheet").querySelectorAll('input[name="c_rs"]:checked')].map(i=>i.value);
@@ -1381,6 +1420,8 @@ function formCompte(uid, pre){
     const em = $("#c_em").value.trim().toLowerCase();
     if (!/^[^@\s]+@[^@\s]+$/.test(em) || !estUVCI(em)){ $("#c_err").textContent = `Saisissez une adresse se terminant par @${DOMAINE()}.`; return; }
     if (S.comptes[em] || em === S.email){ $("#c_err").textContent = "Cette adresse a déjà un accès : modifiez son compte pour lui ajouter une fonction."; return; }
+    const homonyme = Object.entries(S.comptes).find(([,x])=>normNom(x.nom)===normNom(data.nom));
+    if (homonyme && $("#c_ok").dataset.sure!=="1"){ $("#c_ok").dataset.sure = "1"; $("#c_ok").textContent = "Créer quand même"; $("#c_err").textContent = `${homonyme[1].nom} a déjà un compte (${homonyme[0]}). Une personne = un compte : ajoutez plutôt la fonction sur son compte existant. Touchez « Créer quand même » seulement s'il s'agit d'une autre personne.`; return; }
     if (await write(()=>S.db.doc("users/"+em).set({...data, email:em, actif:true, creeLe:nowISO(), creePar:S.email}), "Personne ajoutée")){
       audit("creation", "compte", em, {nom:data.nom, role:data.role, rolesSup:data.rolesSup, fonctions:fonctions.map(titreFonction)});
       const lien = location.origin + location.pathname;
@@ -1960,7 +2001,7 @@ function texteMsg(m){
   if (m.type==="recu"){
     const x = S.encaissements.find(k=>k.num===m.ref);
     if (!x) return m.texte || "";
-    return `Bonjour ${pr}, la CVPB confirme la réception de votre paiement de ${F(x.montant)} FCFA (${x.nature}${x.mois?` · ${moisLib(x.mois)}`:""}) du ${dFR(x.date)}, par ${x.mode}${x.ref?` (réf. ${x.ref})`:""}. Reçu n° ${x.num}.\n${situationTxt(e)}\n${signature()}`;
+    return `Bonjour ${pr}, la CVPB confirme la réception de votre paiement de ${F(x.montant)} FCFA (${x.nature}${x.mois?` · ${moisLib(x.mois)}`:""}) du ${dFR(x.date)}, par ${x.mode}${x.ref?` (réf. ${x.ref})`:""}. Reçu n° ${x.num}.${x.tranche && e.prochain ? `\nPaiement échelonné : il reste ${F(e.prochain.reste)} FCFA à régler pour ${e.prochain.libelle}.` : ""}\n${situationTxt(e)}\n${signature()}`;
   }
   if (m.type==="relance") return relanceMsg(s, e) + `\n${signature()}`;
   if (m.type==="absence"){
@@ -2961,21 +3002,27 @@ function audit(action, objet, ref, details){
 /* ---------------------------- Organigramme ---------------------------- */
 function vOrganigramme(){
   const L = actifsTous().flatMap(c => ((c.fonctions||[]).length ? c.fonctions : c.role==="president" ? [{code:"PRESIDENT", com:null}] : []).map(f => ({...f, em:c.em, nom:c.nom, connecte:!!c.uid || c.role==="president"})));
-  const carte = x => `<div class="prow"><span><b>${esc(x.nom)}</b><br><span class="small muted">${esc(titreFonction(x))}</span></span>${x.connecte?"":'<span class="pill warn">Jamais connecté</span>'}</div>`;
-  const bureau = L.filter(x=>FONCTIONS[x.code]?.bureau).sort((a,b)=>FONCTIONS[a.code].rang-FONCTIONS[b.code].rang);
+  /* Une seule ligne par personne et par bloc, même si elle cumule plusieurs fonctions */
+  const regrouper = X => { const m = new Map(); for (const x of X){ const g = m.get(x.em) || {...x, titres:[], rang:99}; const t = titreFonction(x); if (!g.titres.includes(t)) g.titres.push(t); g.rang = Math.min(g.rang, FONCTIONS[x.code]?.rang||99); m.set(x.em, g); } return [...m.values()].sort((a,b)=>a.rang-b.rang || a.nom.localeCompare(b.nom,"fr")); };
+  const carte = x => `<div class="prow"><span><b>${esc(x.nom)}</b><br><span class="small muted">${esc(x.titres.join(" · "))}</span></span>${x.connecte?"":'<span class="pill warn">Jamais connecté</span>'}</div>`;
+  const bureau = regrouper(L.filter(x=>FONCTIONS[x.code]?.bureau));
   let cdc = "";
   if (presidence()){
     const noms = new Map(Object.entries(S.comptes).map(([em,c])=>[normNom(c.nom), em]));
     noms.set(normNom("Zak"), S.email);
-    const ouverts = ORGA_CDC.filter(([n])=>noms.has(normNom(n))).length;
-    cdc = `<details class="card" ${ouverts<ORGA_CDC.length?"open":""}><summary><b>Organigramme du cahier des charges</b> · ${ouverts}/${ORGA_CDC.length} comptes ouverts</summary>
-      <p class="small muted">Noms repris du cahier des charges 2026-2027, à confirmer. Touchez « Ouvrir » pour créer le compte avec sa fonction : il ne reste qu'à saisir l'adresse UVCI.</p>
-      ${ORGA_CDC.map(([n,code,com],i)=>{ const em = noms.get(normNom(n)); return `<div class="prow"><span><b>${esc(n)}</b><br><span class="small muted">${esc(titreFonction({code,com}))}</span></span>${em?'<span class="pill ok">Compte ouvert</span>':`<button class="btn sm" data-orga="${i}">Ouvrir</button>`}</div>`; }).join("")}</details>`;
+    const restants = ORGA_CDC.map((x,i)=>[...x,i]).filter(([n])=>!noms.has(normNom(n)));
+    /* Comptes en double : même nom sous deux adresses différentes */
+    const parNom = {}; for (const [em,c] of Object.entries(S.comptes)) (parNom[normNom(c.nom)] ||= []).push(em);
+    const doubles = Object.values(parNom).filter(v=>v.length>1);
+    cdc = (doubles.length ? `<div class="banner"><b>Comptes en double possibles</b> : ${doubles.map(v=>esc(v.map(em=>`${S.comptes[em].nom} (${em})`).join(" = "))).join(" · ")}. Gardez une seule adresse par personne et suspendez l'autre dans Administration › Comptes.</div>` : "")
+      + (restants.length ? `<details class="card" open><summary><b>Comptes à ouvrir</b> · ${ORGA_CDC.length-restants.length}/${ORGA_CDC.length} déjà ouverts</summary>
+      <p class="small muted">Noms repris du cahier des charges 2026-2027, à confirmer. Touchez « Ouvrir » pour créer le compte avec sa fonction : il ne reste qu'à saisir l'adresse UVCI. Si la personne a déjà un compte sous un autre nom, ajoutez-lui plutôt la fonction depuis Administration › Comptes.</p>
+      ${restants.map(([n,code,com,i])=>`<div class="prow"><span><b>${esc(n)}</b><br><span class="small muted">${esc(titreFonction({code,com}))}</span></span><button class="btn sm" data-orga="${i}">Ouvrir</button></div>`).join("")}</details>` : "");
   }
   return `<div class="spread"><div><h2>Organigramme ${esc(P().annee||"")}</h2><p class="small muted">Fonctions actives. Une personne peut cumuler plusieurs fonctions avec un seul compte.</p></div></div>
     ${cdc}
     <div class="card"><h3>Bureau exécutif</h3>${bureau.map(carte).join("") || '<div class="empty">Aucune fonction de bureau renseignée. La Présidence les attribue dans Administration › Comptes.</div>'}</div>
-    <div class="cards2">${COMMISSIONS.map(([code]) => { const M = L.filter(x=>x.com===code && !FONCTIONS[x.code]?.bureau).sort((a,b)=>(FONCTIONS[a.code]?.rang||99)-(FONCTIONS[b.code]?.rang||99)); return `<div class="card"><h3>${esc(comNom(code))}</h3>${M.map(carte).join("") || '<p class="small muted">Titulaires à nommer.</p>'}</div>`; }).join("")}</div>`;
+    <div class="cards2">${COMMISSIONS.map(([code]) => { const M = regrouper(L.filter(x=>x.com===code && !FONCTIONS[x.code]?.bureau)).map(x=>({...x, titres:x.titres.map(t=>t.replace(" — "+comCourt(code),""))})); return `<div class="card"><h3>${esc(comNom(code))}</h3>${M.map(carte).join("") || '<p class="small muted">Titulaires à nommer.</p>'}</div>`; }).join("")}</div>`;
 }
 function bindOrganigramme(){
   $("#main").querySelectorAll("[data-orga]").forEach(b => b.onclick = () => { const [nom, code, com] = ORGA_CDC[Number(b.dataset.orga)]; formCompte(null, {nom, fonctions:[{code, com}]}); });
