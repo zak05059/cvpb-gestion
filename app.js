@@ -3,7 +3,7 @@ import { firebaseConfig } from "./firebase-config.js";
 
 /*CALC-START*/
 /* ======== Référentiels et calculs (fonctions pures) ======== */
-const TOUS = ["encaissement","caisse","tresorerie","formation","pedagogie","secretaire","tuteurs","accompagnement"];
+const TOUS = ["encaissement","caisse","tresorerie","formation","pedagogie","secretaire","tuteurs","accompagnement","responsable","membre"];
 /* Rôles qui voient tout en lecture (sans rien valider) */
 const LECTURE_TOTALE = ["vicepresident"];
 /* Le/la trésorier(e) tient aussi la caisse : le rôle « caisse » cumule les accès de la trésorerie */
@@ -20,7 +20,9 @@ const ROLES = {
   tuteurs:{l:"Responsable des Tuteurs", perms:["tut.voir","tut.suivre","tut.valider","export","tel.voir"], partage:"Éditeur"},
   accompagnement:{l:"Responsable Suivi et Accompagnement", perms:["peda.voir","tut.voir","acc.gerer","export","tel.voir","msg.peda"], partage:"Éditeur"},
   pedagogie:{l:"Formateur de l'Académie", perms:["peda.voir","peda.saisir","tel.voir","msg.peda"], partage:"Contributeur"},
-  tuteur:{l:"Tuteur", perms:["tut.saisir"], partage:"Contributeur"}
+  tuteur:{l:"Tuteur", perms:["tut.saisir"], partage:"Contributeur"},
+  responsable:{l:"Responsable de commission", perms:[], partage:"Contributeur"},
+  membre:{l:"Membre d'équipe (collaborateur)", perms:[], partage:"Contributeur"}
 };
 const SPECS_FORM = ["IAN-BD : Informatique et Sciences du Numérique – Bases de Données","IAN-RSI : Informatique et Sciences du Numérique – Réseaux et Sécurité Informatique","IAN-DAS : Informatique et Sciences du Numérique – Développement d'Applications et e-Services","IAN-MMX : Informatique et Sciences du Numérique – Multimédia et Arts Numériques","HSN-COM : Humanités et Sciences Numériques – Communication Digitale","GEN-CMD : Gestion, Économie et Numérique – E-commerce et Marketing Digital","ADN-ATD : Administration et Droit du Numérique – E-Administration et Transformations","IAN-STG : Sciences Géospatiales (Géomatique)"];
 const TYPES_ACT = ["Séance de tutorat académique","Révision de cours","Exercices et travaux pratiques","Assistance aux plateformes pédagogiques","Accompagnement individuel","Préparation aux évaluations","Atelier pratique"];
@@ -35,8 +37,8 @@ function statsTutorat(docs, comptes, today){
   const jour = r => String(r.dateActivite||r.deposeLe||"").slice(0,10);
   const parTuteur = {};
   for (const r of L){ const t = (parTuteur[normNom(r.tuteurNom)] ||= {doc:normNom(r.tuteurNom), nom:r.tuteurNom, n:0, att:0, pres:0, partSum:0, dernier:null, prochaine:null, interventions:0}); t.n++; t.att += Number(r.attendus)||0; t.pres += Number(r.presents)||0; t.partSum += Number(r.participation)||0; if (!t.dernier || jour(r) > t.dernier) t.dernier = jour(r); if (r.prochaineSeance && (!t.prochaine || r.prochaineSeance > t.prochaine)) t.prochaine = r.prochaineSeance; if (r.intervention==="Oui") t.interventions++; }
-  const tutComptes = new Set(Object.values(comptes||{}).filter(c=>c.role==="tuteur" && c.actif!==false).map(c=>normNom(c.nom)));
-  for (const c of Object.values(comptes||{})) if (c.role==="tuteur" && c.actif!==false && !parTuteur[normNom(c.nom)]) parTuteur[normNom(c.nom)] = {doc:normNom(c.nom), nom:c.nom, n:0, att:0, pres:0, partSum:0, dernier:null, prochaine:null, interventions:0};
+  const tutComptes = new Set(Object.values(comptes||{}).filter(c=>(c.role==="tuteur" || (c.rolesSup||[]).includes("tuteur")) && c.actif!==false).map(c=>normNom(c.nom)));
+  for (const c of Object.values(comptes||{})) if ((c.role==="tuteur" || (c.rolesSup||[]).includes("tuteur")) && c.actif!==false && !parTuteur[normNom(c.nom)]) parTuteur[normNom(c.nom)] = {doc:normNom(c.nom), nom:c.nom, n:0, att:0, pres:0, partSum:0, dernier:null, prochaine:null, interventions:0};
   for (const t of Object.values(parTuteur)){ t.taux = t.att ? t.pres/t.att : null; t.partMoy = t.n ? t.partSum/t.n : null; t.joursSans = t.dernier ? joursEntre(t.dernier, today) : null; t.compte = tutComptes.has(t.doc); }
   const il30 = isoD(new Date(parseD(today).getTime()-30*86400000));
   const recents = L.filter(r=>jour(r) >= il30);
@@ -225,7 +227,7 @@ function confirmBtn(btn, label, fn){ btn.onclick = () => { if (btn.dataset.sure!
 
 /* ======== État ======== */
 const S = {
-  db:null, fb:null, uid:null, email:null, moi:null, sansConfig:false, authPret:false, stale:false, jA:[], jB:[],
+  db:null, fb:null, uid:null, email:null, moi:null, sansConfig:false, authPret:false, stale:false, jx:[], decisions:[], taches:[], reunions:[], audit:[],
   etudiants:[], prive:{}, encaissements:[], depots:[], operations:[], seances:[], notes:[], params:null, comptes:{}, demandes:{}, journal:[], journalPub:[], journalFin:[], tut:[], T:null, etat:{}, tf:{tuteur:"", statut:"", spec:""},
   loaded:{}, C:null, sub:{caisse:"synthese", pedagogie:"seances", admin:"comptes", etudiants:""},
   f:{q:"", niveau:"", situation:"", spec:""}, rf:{q:"", nature:"", mois:"", statut:"valides"},
@@ -233,7 +235,9 @@ const S = {
   consignes:[], evaluations:[], messages:[], formations:[], affectations:[], rapportsHebdo:[], dossiers:[], rapportsResp:[], syntheses:[], sf:{sem:"", st:""}, df:{st:"ouverts"}, cf2:{st:"", q:""}, editRH:null, mf:{onglet:"attente", type:""}, classements:[], cf:{statut:"", dest:""}, evalP:"", classP:"", rp:{type:"", mois:"", a:"", b:"", tut:""}
 };
 const compte = () => S.moi;
-const role = () => compte()?.role || null;
+/* Une personne = un compte ; elle peut cumuler plusieurs rôles (rolesSup) et choisit l'espace affiché. */
+const rolesDe = c => c ? [c.role, ...(c.rolesSup||[])].filter((r,i,a)=>r && ROLES[r] && a.indexOf(r)===i) : [];
+const role = () => { const c = compte(); if (!c) return null; if (c.role==="president") return "president"; const a = localStorage.getItem("cvpb-espace"); return rolesDe(c).includes(a) ? a : c.role; };
 const can = p => { const r = ROLES[role()]; return !!r && (r.perms.includes("*") || r.perms.includes(p)); };
 const P = () => S.C?.P || PARAM_DEFAUT;
 const etuBy = m => S.etudiants.find(s=>s.matricule===m);
@@ -253,14 +257,14 @@ async function log(action, texte, pour, extra){
   const canaux = new Set(["president", ...LECTURE_TOTALE]);
   if ((pour||[]).some(p=>["bureau","formation","pedagogie"].includes(p))) canaux.add("secretaire");
   if ((pour||[]).includes("tresorerie")) canaux.add("caisse");
-  for (const p of pour||[]){ if (p==="tous") TOUS.forEach(r=>canaux.add(r)); else if (String(p).startsWith("u:")) canaux.add("u_"+p.slice(2)); else if (ROLES[p]) canaux.add(p); }
+  for (const p of pour||[]){ if (p==="tous") TOUS.forEach(r=>canaux.add(r)); else if (String(p).startsWith("u:")) canaux.add("u_"+p.slice(2)); else if (String(p).startsWith("e:")) canaux.add("e_"+p.slice(2)); else if (ROLES[p]) canaux.add(p); }
   const id = "J" + Date.now().toString(36) + Math.random().toString(36).slice(2,6);
   const data = {le:nowISO(), par:S.uid, parNom:compte()?.nom||"", role:role(), action, texte, pour:[...canaux], ...(extra||{})};
   S.db.lots([...canaux].map(c=>({path:`notifs/${c}/items/${id}`, data}))).catch(()=>{});
 }
 function fusionJournal(){
   const avant = new Set(S.journal.map(j=>j.id));
-  const m = new Map(); for (const j of [...S.jA, ...S.jB]) m.set(j.id, j);
+  const m = new Map(); for (const j of S.jx.flat()) m.set(j.id, j);
   S.journal = [...m.values()].sort((a,b)=>String(b.le).localeCompare(String(a.le))).slice(0,300);
   if (S.journalPret){
     const neuf = S.journal.filter(j=>!avant.has(j.id) && j.par!==S.uid);
@@ -287,6 +291,10 @@ const RL = (...l) => () => inclut(l, role()) || role()==="president" || LECTURE_
 const VIEWS = [
   {id:"accueil", l:"Tableau de bord", ok:()=>true},
   {id:"consignes", l:"Consignes", ok:()=>true},
+  {id:"taches", l:"Tâches", ok:()=>true},
+  {id:"decisions", l:"Décisions", ok:()=>gouvSup() || S.decisions.length>0},
+  {id:"reunions", l:"Réunions", ok:()=>true},
+  {id:"organigramme", l:"Organigramme", ok:()=>true},
   {id:"suivi", l:"Suivi des étudiants", ok:RL("tuteurs","accompagnement","secretaire","formation")},
   {id:"synthese", l:"Synthèses et rapports", ok:RL("secretaire","formation","tuteurs","accompagnement")},
   {id:"catalogue", l:"Catalogue des formations", ok:RL("formation","secretaire","pedagogie")},
@@ -302,6 +310,7 @@ const VIEWS = [
   {id:"evaluations", l:"Évaluations", ok:()=>presidence()||LECTURE_TOTALE.includes(role())},
   {id:"classement", l:"Classement", ok:()=>!presidence()&&!LECTURE_TOTALE.includes(role())},
   {id:"notifications", l:"Alertes et notifications", ok:()=>true},
+  {id:"audit", l:"Journal d'audit", ok:()=>gouvSup()},
   {id:"admin", l:"Administration", ok:R()},
   {id:"compte", l:"Mon compte", ok:()=>true}
 ];
@@ -357,22 +366,23 @@ function rendu(){
   const c = compte();
   if (!c){ $("#tabs").innerHTML=""; main.innerHTML = gate("Accès non autorisé", `Le compte <b>${esc(S.email)}</b> n'a pas encore été ajouté à l'application. Demandez au président de la CVPB de vous ajouter avec cette adresse.`, btnDeco()); bindDeco(); return; }
   if (c.actif === false){ $("#tabs").innerHTML=""; main.innerHTML = gate("Accès suspendu", "Votre accès a été suspendu par la Présidence. Contactez le président pour le rétablir.", btnDeco()); bindDeco(); return; }
-  $("#who").innerHTML = `<b>${esc(c.nom)}</b>${esc(ROLES[c.role]?.l||"")}`;
-  espace(c.role==="tuteur");
+  $("#who").innerHTML = `<b>${esc(c.nom)}</b>${esc(ROLES[role()]?.l||"")}${rolesDe(c).length>1 && c.role!=="president"?" · changer d'espace dans Mon compte":""}`;
+  espace(role()==="tuteur");
   if (!S.loaded.params){ main.innerHTML = S.stale ? `<div class="empty">Les données ne répondent pas encore. Vérifiez votre connexion.</div>` : skel(); return; }
   recalc();
-  if (c.role==="tuteur"){ renderTuteur(main); majBadge(); return; }
+  if (role()==="tuteur"){ renderTuteur(main); majBadge(); return; }
   const v = view();
   const lab = x => x.id==="accueil" ? (c.role==="president" ? "Tableau général" : "Mon espace") : x.l;
-  const nb = x => x.id==="notifications" ? nonLues().length : x.id==="tutorat" && can("tut.suivre") ? S.T.nouveaux.length : x.id==="suivi" ? (role()==="tuteurs" ? S.rapportsHebdo.filter(r=>r.statut==="Soumis").length : role()==="accompagnement" ? S.rapportsHebdo.filter(r=>r.statut==="Validé").length : role()==="secretaire" ? etatSuivi().aControler : 0) : x.id==="synthese" ? (role()==="secretaire" ? S.rapportsResp.filter(r=>r.statut==="Transmis").length : presidence() ? S.syntheses.filter(s=>s.statut==="Transmise" && !s.luLe).length : S.rapportsResp.filter(r=>r.auteurEmail===S.email && r.statut==="Complément demandé").length) : x.id==="messages" ? S.messages.filter(m=>m.statut==="À envoyer" && (lectureTotale() || domainesMsg().includes(m.domaine))).length : x.id==="consignes" ? (lectureTotale() ? S.consignes.filter(k=>!["Faite","Annulée"].includes(k.statut) && k.echeance<today()).length : consignesNonLues()) : 0;
-  navigation(VIEWS.filter(x=>x.ok()).map(x=>({id:x.id, l:x.id==="consignes"&&!lectureTotale()?"Mes consignes":lab(x), n:nb(x)})), v, principauxDe(c.role));
+  const nb = x => x.id==="notifications" ? nonLues().length : x.id==="tutorat" && can("tut.suivre") ? S.T.nouveaux.length : x.id==="suivi" ? (role()==="tuteurs" ? S.rapportsHebdo.filter(r=>r.statut==="Soumis").length : role()==="accompagnement" ? S.rapportsHebdo.filter(r=>r.statut==="Validé").length : role()==="secretaire" ? etatSuivi().aControler : 0) : x.id==="synthese" ? (role()==="secretaire" ? S.rapportsResp.filter(r=>r.statut==="Transmis").length : presidence() ? S.syntheses.filter(s=>s.statut==="Transmise" && !s.luLe).length : S.rapportsResp.filter(r=>r.auteurEmail===S.email && r.statut==="Complément demandé").length) : x.id==="messages" ? S.messages.filter(m=>m.statut==="À envoyer" && (lectureTotale() || domainesMsg().includes(m.domaine))).length : x.id==="consignes" ? (lectureTotale() ? S.consignes.filter(k=>!["Faite","Annulée"].includes(k.statut) && k.echeance<today()).length : consignesNonLues()) : x.id==="taches" ? S.taches.filter(t=>executeur(t) && t.statut==="À faire").length : x.id==="decisions" ? mesDecisions().filter(d=>(d.exec?.[ek(S.email)]?.statut||"À démarrer")==="À démarrer" && !["Exécutée","Annulée"].includes(d.statut)).length : 0;
+  navigation(VIEWS.filter(x=>x.ok()).map(x=>({id:x.id, l:x.id==="consignes"&&!lectureTotale()?"Mes consignes":lab(x), n:nb(x)})), v, principauxDe(role()));
   majBadge();
   if (v==="depots") S.sub.caisse = "depots";
-  main.innerHTML = (v==="accueil" ? heroAccueil() + anneaux() + blocConsignes() : "") + ({suivi:vSuivi, synthese:vSynthese, catalogue:vCatalogue, messages:vMessages, consignes:vConsignes, rapports:vRapports, evaluations:vEvaluations, classement:vClassement, accueil:vAccueil, etudiants:vEtudiants, registre:vRegistre, cotisations:vCotisations, caisse:vCaisse, depots:vCaisse, pedagogie:vPedagogie, tutorat:vTutorat, notifications:vNotifs, admin:vAdmin, compte:vCompte}[v])();
+  main.innerHTML = (v==="accueil" ? heroAccueil() + anneaux() + blocGouv() + blocConsignes() : "") + ({taches:vTaches, decisions:vDecisions, reunions:vReunions, organigramme:vOrganigramme, audit:vAudit, suivi:vSuivi, synthese:vSynthese, catalogue:vCatalogue, messages:vMessages, consignes:vConsignes, rapports:vRapports, evaluations:vEvaluations, classement:vClassement, accueil:vAccueil, etudiants:vEtudiants, registre:vRegistre, cotisations:vCotisations, caisse:vCaisse, depots:vCaisse, pedagogie:vPedagogie, tutorat:vTutorat, notifications:vNotifs, admin:vAdmin, compte:vCompte}[v])();
   bind(v==="depots" ? "caisse" : v);
   if (v==="compte") bindCompte();
   if (v==="notifications") marquerLu();
-  ({suivi:bindSuivi, synthese:bindSynthese, catalogue:bindCatalogue, messages:bindMessages, consignes:bindConsignes, rapports:bindRapports, evaluations:bindEvaluations, classement:bindClassement}[v]||(()=>{}))();
+  if (v==="accueil") bindGouvCommun();
+  ({taches:bindTaches, decisions:bindDecisions, reunions:bindReunions, organigramme:bindOrganigramme, audit:bindAudit, suivi:bindSuivi, synthese:bindSynthese, catalogue:bindCatalogue, messages:bindMessages, consignes:bindConsignes, rapports:bindRapports, evaluations:bindEvaluations, classement:bindClassement}[v]||(()=>{}))();
   $("#main").querySelectorAll("[data-cons]").forEach(b => b.onclick = () => ficheConsigne(b.dataset.cons));
   if (!["suivi","synthese"].includes(v)){ $("#main").querySelectorAll("[data-rh]").forEach(b => b.onclick = e => { e.preventDefault(); ficheHebdo(b.dataset.rh); }); $("#main").querySelectorAll("[data-dos]").forEach(b => b.onclick = () => ficheDossier(b.dataset.dos)); $("#main").querySelectorAll("[data-syn]").forEach(b => b.onclick = () => ficheSynthese(b.dataset.syn)); }
   $("#main").querySelectorAll("[data-goto-sub]").forEach(a => a.addEventListener("click", () => { S.sub.synthese = a.dataset.gotoSub; }));
@@ -430,7 +440,8 @@ function bindInstall(){ $("#inst") && ($("#inst").onclick = async () => { invite
 function vCompte(){
   const c = compte(), perm = "Notification" in window ? Notification.permission : "indisponible";
   return `<h2>Mon compte</h2>
-  <div class="card"><dl class="dl"><dt>Nom</dt><dd>${esc(c.nom)}</dd><dt>Compte Google</dt><dd class="num" style="overflow-wrap:anywhere">${esc(S.email)}</dd><dt>Rôle</dt><dd>${esc(ROLES[c.role]?.l)}</dd>${c.role==="tuteur"?`<dt>Groupe encadré</dt><dd>${esc(codeSp(c.specialite))} · ${esc(c.niveau||"")}</dd>`:""}</dl></div>
+  <div class="card"><dl class="dl"><dt>Nom</dt><dd>${esc(c.nom)}</dd><dt>Compte Google</dt><dd class="num" style="overflow-wrap:anywhere">${esc(S.email)}</dd><dt>Fonctions</dt><dd>${esc((c.fonctions||[]).map(titreFonction).join(", ") || "—")}</dd><dt>Rôles</dt><dd>${esc(rolesDe(c).map(r=>ROLES[r]?.l).join(" + "))}</dd>${c.role==="tuteur"?`<dt>Groupe encadré</dt><dd>${esc(codeSp(c.specialite))} · ${esc(c.niveau||"")}</dd>`:""}</dl></div>
+  ${rolesDe(c).length>1 && c.role!=="president"?`<div class="card"><h3>Espace affiché</h3><p class="small muted">Vous cumulez plusieurs fonctions avec un seul compte. Choisissez l'espace de travail à afficher ; vos tâches, décisions et réunions restent visibles partout.</p><div class="subtabs" role="group" aria-label="Espace">${rolesDe(c).map(r=>`<button data-espace="${r}" aria-pressed="${role()===r}">${esc(ROLES[r].l)}</button>`).join("")}</div></div>`:""}
   <div class="card"><h3>Application sur le téléphone</h3>${estInstallee()?'<p class="small">L\'application est installée sur cet appareil.</p>':installHTML()}
     <h3>Notifications du téléphone</h3>
     ${perm==="granted"?'<p class="small">Activées : vous serez prévenu des nouvelles actions qui vous concernent.</p>':perm==="denied"?'<p class="small">Bloquées dans les réglages du navigateur. Autorisez les notifications pour ce site pour les recevoir.</p>':perm==="indisponible"?'<p class="small muted">Non disponibles sur cet appareil.</p>':'<button class="btn" id="notifOn" type="button">Activer les notifications</button>'}
@@ -440,6 +451,7 @@ function vCompte(){
 }
 function bindCompte(){
   bindInstall(); bindDeco();
+  document.querySelectorAll("[data-espace]").forEach(b => b.onclick = () => { localStorage.setItem("cvpb-espace", b.dataset.espace); location.hash = b.dataset.espace==="tuteur" ? "t-accueil" : "accueil"; location.reload(); });
   document.querySelectorAll("[data-theme-set]").forEach(b => b.onclick = () => { try { localStorage.setItem("cvpb-theme", b.dataset.themeSet); } catch(e){} appliquerTheme(); render(); });
   $("#notifOn") && ($("#notifOn").onclick = async () => { try { await Notification.requestPermission(); } catch(e){} render(); });
 }
@@ -478,9 +490,18 @@ function relanceListe(max){
 function vAccueil(){
   const r = role();
   if (r==="president" || LECTURE_TOTALE.includes(r)) return vGeneral();
-  return ({tuteurs:vDashTuteurs, accompagnement:vDashAccomp, secretaire:vDashSG, encaissement:vDashEnc, caisse:vDashCaisse, tresorerie:vDashTreso, formation:vDashFormation, pedagogie:vDashPeda}[r] || vGeneral)();
+  return ({tuteurs:vDashTuteurs, accompagnement:vDashAccomp, secretaire:vDashSG, encaissement:vDashEnc, caisse:vDashCaisse, tresorerie:vDashTreso, formation:vDashFormation, pedagogie:vDashPeda}[r] || vDashEquipe)();
 }
 
+/* Responsables de commission et membres d'équipe : leur travail (bloc « Mon travail ») et leur commission */
+function vDashEquipe(){
+  const coms = mesComs();
+  if (!coms.length) return `<div class="card"><p class="small muted">Aucune commission rattachée à votre compte. La Présidence l'indique dans vos fonctions.</p></div>`;
+  return coms.map(c => { const M = membresDe(c), T = S.taches.filter(t=>t.commission===c);
+    return `<div class="card"><div class="spread"><h3>${esc(comNom(c))}</h3>${mesComsResp().includes(c)?'<span class="pill">Responsable</span>':""}</div>
+      <div class="kpis">${kpi(T.filter(t=>TACHE_OUV.includes(t.statut)).length,"tâches ouvertes")}${kpi(T.filter(tRetard).length,"en retard",T.some(tRetard)?"bad":"g")}${kpi(T.filter(t=>t.statut==="Terminée").length,"terminées","g")}</div>
+      <p class="small muted">Équipe : ${esc(M.map(x=>x.nom).join(", ") || "—")}</p></div>`; }).join("");
+}
 /* Tableau général de la Présidence */
 function vGeneral(){
   const C = S.C, K = C.caisse, T = S.T, pres = role()==="president";
@@ -1109,13 +1130,16 @@ function ficheRapport(doc, id){
 }
 
 /* ---- Espace Tuteurs ---- */
-const TVIEWS = [{id:"t-accueil", l:"Mon tableau de bord"},{id:"t-hebdo", l:"Rapport de la semaine"},{id:"t-rapports", l:"Mes rapports"},{id:"t-etudiants", l:"Mes étudiants"},{id:"t-consignes", l:"Consignes"},{id:"t-classement", l:"Classement"},{id:"t-notifs", l:"Notifications"},{id:"t-compte", l:"Mon compte"}];
+const TVIEWS = [{id:"t-accueil", l:"Mon tableau de bord"},{id:"t-hebdo", l:"Rapport de la semaine"},{id:"t-rapports", l:"Mes rapports"},{id:"t-etudiants", l:"Mes étudiants"},{id:"t-consignes", l:"Consignes"},{id:"t-taches", l:"Tâches"},{id:"t-reunions", l:"Réunions"},{id:"t-organigramme", l:"Organigramme"},{id:"t-classement", l:"Classement"},{id:"t-notifs", l:"Notifications"},{id:"t-compte", l:"Mon compte"}];
 function tview(){ const h = location.hash.slice(1); return TVIEWS.some(v=>v.id===h) ? h : "t-accueil"; }
 const mesRapports = () => S.T.rapports.filter(r=>r.doc===S.uid);
 function renderTuteur(main){
   const v = tview();
   navigation(TVIEWS.map(x=>({id:x.id, l:x.l, n:x.id==="t-notifs"?nonLues().length:x.id==="t-consignes"?consignesNonLues():0})), v, principauxDe("tuteur"));
   if (v==="t-consignes"){ main.innerHTML = vConsignes(); bindConsignes(); return; }
+  if (v==="t-taches"){ main.innerHTML = vTaches(); bindTaches(); return; }
+  if (v==="t-reunions"){ main.innerHTML = vReunions(); bindReunions(); return; }
+  if (v==="t-organigramme"){ main.innerHTML = vOrganigramme(); bindOrganigramme(); return; }
   if (v==="t-classement"){ main.innerHTML = vClassement(); bindClassement(); return; }
   if (v==="t-hebdo"){ const r = S.editRH ? rhDe(S.email, S.editRH) : null; S.editRH = null; main.innerHTML = formHebdoHTML(r && ["Brouillon","Retourné"].includes(r.statut) ? r : null); bindFormHebdo(r && ["Brouillon","Retourné"].includes(r.statut) ? r : null); return; }
   if (v==="t-rapports"){ main.innerHTML = vTuteurHebdoListe(); main.querySelectorAll("[data-rh]").forEach(b => b.onclick = () => ficheHebdo(b.dataset.rh)); return; }
@@ -1246,7 +1270,7 @@ function vAdmin(){
   let body = "";
   if (sub==="comptes"){
     const resp = Object.entries(S.comptes).filter(([,c])=>c.role!=="tuteur").sort((a,b)=>a[1].nom.localeCompare(b[1].nom,"fr")), tut = Object.entries(S.comptes).filter(([,c])=>c.role==="tuteur").sort((a,b)=>a[1].nom.localeCompare(b[1].nom,"fr"));
-    const ligne = ([u,c]) => `<div class="prow"><span><b>${esc(c.nom)}</b> ${c.actif===false?'<span class="pill bad">Suspendu</span>':""}${!c.uid&&c.role!=="president"?' <span class="pill warn">Jamais connecté</span>':""}<br><span class="small muted">${esc(ROLES[c.role]?.l)}${c.role==="tuteur"?` · ${esc(codeSp(c.specialite))} ${esc(c.niveau||"")}`:""} · <span class="num" style="overflow-wrap:anywhere">${esc(u)}</span>${c.derniereConnexion?` · vu le ${new Date(c.derniereConnexion).toLocaleDateString("fr-FR",{day:"numeric",month:"short"})}`:""}</span></span>${u!==S.email?`<button class="btn sm ghost" data-cpt="${esc(u)}">Modifier</button>`:'<span class="pill">Vous</span>'}</div>`;
+    const ligne = ([u,c]) => `<div class="prow"><span><b>${esc(c.nom)}</b> ${c.actif===false?'<span class="pill bad">Suspendu</span>':""}${!c.uid&&c.role!=="president"?' <span class="pill warn">Jamais connecté</span>':""}<br><span class="small muted">${esc([ROLES[c.role]?.l, ...(c.rolesSup||[]).map(r=>ROLES[r]?.l)].filter(Boolean).join(" + "))}${(c.fonctions||[]).length?` · ${esc(c.fonctions.map(titreFonction).join(", "))}`:""}${c.role==="tuteur"?` · ${esc(codeSp(c.specialite))} ${esc(c.niveau||"")}`:""} · <span class="num" style="overflow-wrap:anywhere">${esc(u)}</span>${c.derniereConnexion?` · vu le ${new Date(c.derniereConnexion).toLocaleDateString("fr-FR",{day:"numeric",month:"short"})}`:""}</span></span>${u!==S.email?`<button class="btn sm ghost" data-cpt="${esc(u)}">Modifier</button>`:'<span class="pill">Vous</span>'}</div>`;
     body = `<div class="spread"><p class="small muted">Ajoutez chaque personne avec son adresse Google UVCI. Elle se connecte ensuite avec « Se connecter avec Google UVCI », sans mot de passe à retenir.</p><button class="btn primary" id="newCpt">+ Ajouter une personne</button></div>
       <div class="card"><h3>Responsables (${resp.length})</h3>${resp.map(ligne).join("")||'<div class="empty">Aucun.</div>'}</div>
       <div class="card"><h3>Tuteurs (${tut.length})</h3>${tut.map(ligne).join("")||'<div class="empty">Aucun tuteur. Créez leurs comptes avec le rôle Tuteur.</div>'}</div>
@@ -1307,33 +1331,60 @@ function vAdmin(){
   }
   return `<h2>Administration</h2><div class="subtabs" role="group" aria-label="Administration">${[["comptes","Comptes et accès"],["parametres","Paramètres"],["journal","Journal"],["import","Import des données"]].map(([k,l])=>`<button data-sub="${k}" aria-pressed="${sub===k}">${l}</button>`).join("")}</div>${body}`;
 }
-function formCompte(uid){
-  const isNew = !uid, c = isNew ? {role:"encaissement", actif:true} : S.comptes[uid];
+function formCompte(uid, pre){
+  const isNew = !uid, c = isNew ? {role:(pre?.fonctions?.[0] && roleDeFonction(pre.fonctions[0]) && roleDeFonction(pre.fonctions[0])!=="president") ? roleDeFonction(pre.fonctions[0]) : "membre", actif:true, nom:pre?.nom||"", fonctions:pre?.fonctions||[]} : S.comptes[uid];
+  const F = (c.fonctions||[]).map(f=>({...f}));
+  const rolesListe = Object.entries(ROLES).filter(([k])=>k!=="president" && (k!=="tresorerie" || c.role==="tresorerie"));
   openSheet(`<h2>${isNew?"Ajouter une personne":"Modifier "+esc(c.nom)}</h2>
     <label class="f" for="c_n">Nom et prénoms<input type="text" id="c_n" value="${esc(c.nom)}" maxlength="80"></label>
-    ${isNew?`<label class="f" for="c_em">Adresse Google UVCI<input type="email" id="c_em" autocapitalize="none" spellcheck="false" maxlength="80" placeholder="prenom.nom@${esc(DOMAINE())}"><span class="hint">L'adresse exacte avec laquelle la personne se connecte à l'UVCI.</span></label>`:`<p class="small">Compte : <b class="num" style="overflow-wrap:anywhere">${esc(uid)}</b></p>`}
-    <label class="f" for="c_r">Rôle<select id="c_r">${opts(Object.entries(ROLES).filter(([k])=>k!=="president" && (k!=="tresorerie" || c.role==="tresorerie")).map(([k,r])=>[k,r.l]), c.role)}</select></label>
-    <div class="g2" id="c_tw"><label class="f" for="c_sp">Spécialité encadrée<select id="c_sp">${opts(SPECS_FORM, c.specialite, "—")}</select></label><label class="f" for="c_nv">Niveau encadré<select id="c_nv">${opts(["Licence 1","Licence 2","Licence 3"], c.niveau)}</select></label></div>
+    ${isNew?`<label class="f" for="c_em">Adresse Google UVCI<input type="email" id="c_em" autocapitalize="none" spellcheck="false" maxlength="80" placeholder="prenom.nom@${esc(DOMAINE())}"><span class="hint">L'adresse exacte avec laquelle la personne se connecte à l'UVCI. Une seule adresse par personne, même si elle cumule plusieurs fonctions.</span></label>`:`<p class="small">Compte : <b class="num" style="overflow-wrap:anywhere">${esc(uid)}</b></p>`}
+    <fieldset><legend>Fonctions dans l'organigramme</legend><div id="c_fx"></div><button type="button" class="btn sm" id="c_fadd">+ Ajouter une fonction</button>
+      <p class="hint">Chaque fonction donne automatiquement le rôle correspondant dans l'application. Les responsables de commission attribuent des tâches et convoquent des réunions pour leur commission uniquement.</p></fieldset>
+    <label class="f" for="c_r">Rôle principal (espace affiché à la connexion)<select id="c_r">${opts(rolesListe.map(([k,r])=>[k,r.l]), c.role)}</select></label>
+    <details ${(c.rolesSup||[]).length?"open":""}><summary class="small">Rôles supplémentaires (cumul de fonctions)</summary><div class="checks">${rolesListe.map(([k,r])=>`<label><input type="checkbox" name="c_rs" value="${k}" ${(c.rolesSup||[]).includes(k)?"checked":""}> ${esc(r.l)}</label>`).join("")}</div></details>
+    <div class="g2" id="c_tw"><label class="f" for="c_sp">Spécialité encadrée (tuteur)<select id="c_sp">${opts(SPECS_FORM, c.specialite, "—")}</select></label><label class="f" for="c_nv">Niveau encadré<select id="c_nv">${opts(["Licence 1","Licence 2","Licence 3"], c.niveau)}</select></label></div>
     ${isNew?"":`<label class="row small"><input type="checkbox" id="c_a" ${c.actif!==false?"checked":""}> Accès actif (décocher pour bloquer immédiatement ce compte)</label>`}
     <p class="small" id="c_err" style="color:var(--bad)" role="alert"></p>
     <div class="row"><button class="btn primary" id="c_ok">${isNew?"Ajouter":"Enregistrer"}</button><button class="btn" data-close>Annuler</button></div>`);
-  const upR = () => { $("#c_tw").hidden = $("#c_r").value!=="tuteur"; };
-  $("#c_r").onchange = upR; upR();
+  const dessineF = () => {
+    $("#c_fx").innerHTML = F.map((f,i)=>`<div class="g2" style="align-items:end"><label class="f">Fonction<select data-fc="${i}">${opts(Object.entries(FONCTIONS).map(([k,x])=>[k,x.t]), f.code, "Choisir…")}</select></label><label class="f">Commission<select data-fm="${i}" ${FONCTIONS[f.code]?.bureau?"disabled":""}>${opts(COMMISSIONS.map(x=>[x[0], comCourt(x[0])]), f.com, "—")}</select></label><button type="button" class="btn sm ghost" data-fdel="${i}">Retirer</button></div>`).join("") || '<p class="small muted">Aucune fonction.</p>';
+    $("#c_fx").querySelectorAll("[data-fc]").forEach(s => s.onchange = () => { F[s.dataset.fc].code = s.value; if (FONCTIONS[s.value]?.bureau) F[s.dataset.fc].com = null; dessineF(); });
+    $("#c_fx").querySelectorAll("[data-fm]").forEach(s => s.onchange = () => { F[s.dataset.fm].com = s.value || null; });
+    $("#c_fx").querySelectorAll("[data-fdel]").forEach(b => b.onclick = () => { F.splice(Number(b.dataset.fdel),1); dessineF(); });
+  };
+  dessineF();
+  $("#c_fadd").onclick = () => { F.push({code:"MEMBRE", com:null}); dessineF(); };
+  const upR = () => { $("#c_tw").hidden = !($("#c_r").value==="tuteur" || [...$("#sheet").querySelectorAll('input[name="c_rs"]:checked')].some(i=>i.value==="tuteur") || F.some(f=>f.code==="TUTEUR")); };
+  $("#c_r").onchange = upR; $("#sheet").querySelectorAll('input[name="c_rs"]').forEach(i=>i.onchange=upR); upR();
   $("#c_ok").onclick = async () => {
     const data = {nom:$("#c_n").value.trim().replace(/\s+/g," "), role:$("#c_r").value, majLe:nowISO()};
-    if (data.role==="tuteur"){ data.specialite = $("#c_sp").value; data.niveau = $("#c_nv").value; }
     if (!data.nom){ $("#c_err").textContent = "Le nom est obligatoire."; return; }
+    const fonctions = F.filter(f=>FONCTIONS[f.code]).map(f=>({code:f.code, com:FONCTIONS[f.code].bureau ? null : (f.com||null), depuis:f.depuis||today()}));
+    const manque = fonctions.find(f=>!FONCTIONS[f.code].bureau && ["RESP_COM","MEMBRE","ENCADREMENT"].includes(f.code) && !f.com);
+    if (manque){ $("#c_err").textContent = `Indiquez la commission pour la fonction « ${FONCTIONS[manque.code].t} ».`; return; }
+    const coches = [...$("#sheet").querySelectorAll('input[name="c_rs"]:checked')].map(i=>i.value);
+    const deFonctions = fonctions.map(roleDeFonction).filter(r=>r && r!=="president");
+    data.rolesSup = [...new Set([...coches, ...deFonctions])].filter(r=>r!==data.role && ROLES[r]);
+    data.fonctions = fonctions;
+    data.commissions = [...new Set(fonctions.map(f=>f.com).filter(Boolean))];
+    data.commissionsResp = [...new Set(fonctions.filter(f=>f.code==="RESP_COM").map(f=>f.com).filter(Boolean))];
+    if (rolesDe(data).includes("tuteur")){ data.specialite = $("#c_sp").value; data.niveau = $("#c_nv").value; }
+    const resume = [ROLES[data.role].l, ...data.rolesSup.map(r=>ROLES[r].l)].join(" + ");
     if (!isNew){
       data.actif = $("#c_a").checked;
-      if (await write(()=>S.db.doc("users/"+uid).update(data), "Compte mis à jour")){ if (c.uid) log("compte", `${data.nom} : ${ROLES[data.role].l}${data.actif?"":" (accès suspendu)"}`, ["u:"+c.uid]); closeSheet(); }
+      if (await write(()=>S.db.doc("users/"+uid).update(data), "Compte mis à jour")){
+        audit(data.actif===false && c.actif!==false ? "suspension" : "modification", "compte", uid, {avant:{role:c.role, rolesSup:c.rolesSup||[], fonctions:(c.fonctions||[]).map(titreFonction), actif:c.actif!==false}, apres:{role:data.role, rolesSup:data.rolesSup, fonctions:fonctions.map(titreFonction), actif:data.actif}});
+        log("compte", `${data.nom} : ${resume}${data.actif?"":" (accès suspendu)"}`, ["e:"+uid]); closeSheet();
+      }
       return;
     }
     const em = $("#c_em").value.trim().toLowerCase();
     if (!/^[^@\s]+@[^@\s]+$/.test(em) || !estUVCI(em)){ $("#c_err").textContent = `Saisissez une adresse se terminant par @${DOMAINE()}.`; return; }
-    if (S.comptes[em] || em === S.email){ $("#c_err").textContent = "Cette adresse a déjà un accès."; return; }
+    if (S.comptes[em] || em === S.email){ $("#c_err").textContent = "Cette adresse a déjà un accès : modifiez son compte pour lui ajouter une fonction."; return; }
     if (await write(()=>S.db.doc("users/"+em).set({...data, email:em, actif:true, creeLe:nowISO(), creePar:S.email}), "Personne ajoutée")){
+      audit("creation", "compte", em, {nom:data.nom, role:data.role, rolesSup:data.rolesSup, fonctions:fonctions.map(titreFonction)});
       const lien = location.origin + location.pathname;
-      const msg = `Bonjour ${data.nom}, votre accès à l'application CVPB Manager est prête (${ROLES[data.role].l}).\nOuvrez ce lien : ${lien}\nTouchez « Se connecter avec Google UVCI » et choisissez votre compte ${em}.\nPensez à installer l'application sur votre téléphone (menu du navigateur > Installer l'application).`;
+      const msg = `Bonjour ${data.nom}, votre accès à l'application CVPB Manager est prêt (${fonctions.length ? fonctions.map(titreFonction).join(", ") : ROLES[data.role].l}).\nOuvrez ce lien : ${lien}\nTouchez « Se connecter avec Google UVCI » et choisissez votre compte ${em}.\nPensez à installer l'application sur votre téléphone (menu du navigateur > Installer l'application).`;
       openSheet(`<h2>Accès créé</h2><p><b>${esc(data.nom)}</b> peut maintenant se connecter avec <b class="num" style="overflow-wrap:anywhere">${esc(em)}</b>.</p>
         <div class="row"><a class="btn vert" href="https://wa.me/?text=${encodeURIComponent(msg)}" target="_blank" rel="noopener">Prévenir par WhatsApp</a><button class="btn" id="cpMsg">Copier le message</button><button class="btn" data-close>Terminé</button></div>`);
       $("#cpMsg").onclick = async () => { try { await navigator.clipboard.writeText(msg); toast("Message copié"); } catch(e){ toast("Copie impossible : sélectionnez le texte à la main."); } };
@@ -1465,6 +1516,11 @@ const ICO = (() => {
     catalogue: s('<path d="M4 5a2 2 0 0 1 2-2h12v16H6a2 2 0 0 0-2 2z"/><path d="M4 19V5"/><path d="M9 7h6"/>'),
     hebdo: s('<rect x="3" y="5" width="18" height="16" rx="2"/><path d="M3 10h18M8 3v4M16 3v4"/><path d="M8 15h5"/>'),
     messages: s('<path d="M20.5 11.6a8.4 8.4 0 0 1-12.4 7.4L3.5 20.5l1.6-4.4a8.4 8.4 0 1 1 15.4-4.5z"/><path d="M9 9.5c.3 2 2.2 4.2 5.2 5l1-1.2-1.6-1-.8.6c-.9-.4-1.8-1.3-2.2-2.2l.6-.8-1-1.6z"/>'),
+    taches: s('<rect x="4" y="3" width="16" height="18" rx="2"/><path d="m8 9 2 2 4-4M8 16h8"/>'),
+    decisions: s('<path d="M5 21V4M5 4h11l-2 4 2 4H5"/>'),
+    reunions: s('<circle cx="8" cy="9" r="3"/><circle cx="16" cy="9" r="3"/><path d="M2.5 19c.6-3 2.8-4.5 5.5-4.5S12.9 16 13.5 19M10.5 19c.6-3 2.8-4.5 5.5-4.5s4.9 1.5 5.5 4.5"/>'),
+    organigramme: s('<rect x="9" y="3" width="6" height="5" rx="1"/><rect x="2.5" y="16" width="6" height="5" rx="1"/><rect x="15.5" y="16" width="6" height="5" rx="1"/><path d="M12 8v4M5.5 16v-4h13v4"/>'),
+    audit: s('<path d="M12 3 4 6v6c0 5 3.5 8 8 9 4.5-1 8-4 8-9V6z"/><path d="m9 12 2 2 4-4"/>'),
     menu: s('<rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="3" width="7" height="7" rx="1.5"/><rect x="3" y="14" width="7" height="7" rx="1.5"/><rect x="14" y="14" width="7" height="7" rx="1.5"/>')
   };
 })();
@@ -1476,7 +1532,7 @@ function navigation(items, courant, principaux){
   $("#tabs").innerHTML = items.map(x=>`<a href="#${x.id}" ${x.id===courant?'aria-current="page"':""}>${esc(x.l)}${x.n?` (${x.n})`:""}</a>`).join("");
   const bn = $("#bnav"); bn.hidden = false;
   const pr = principaux.map(id=>items.find(x=>x.id===id)).filter(Boolean).slice(0,4);
-  const court = l => ({"Tableau de bord":"Accueil","Tableau général":"Accueil","Mon espace":"Accueil","Mon tableau de bord":"Accueil","Alertes et notifications":"Alertes","Notifications":"Alertes","Registre des encaissements":"Registre","Suivi des cotisations":"Cotisations","Suivi pédagogique":"Pédagogie","Rapports des tuteurs":"Tutorat","Mes consignes":"Consignes","Nouveau rapport":"Rapport","Mes rapports":"Rapports","Mes dépôts à la caisse":"Dépôts","WhatsApp étudiants":"WhatsApp","Suivi des étudiants":"Suivi","Synthèses et rapports":"Synthèses","Catalogue des formations":"Catalogue","Rapport de la semaine":"Rapport","Mes étudiants":"Étudiants"}[l] || l);
+  const court = l => ({"Tableau de bord":"Accueil","Tableau général":"Accueil","Mon espace":"Accueil","Mon tableau de bord":"Accueil","Alertes et notifications":"Alertes","Notifications":"Alertes","Registre des encaissements":"Registre","Suivi des cotisations":"Cotisations","Suivi pédagogique":"Pédagogie","Rapports des tuteurs":"Tutorat","Mes consignes":"Consignes","Nouveau rapport":"Rapport","Mes rapports":"Rapports","Mes dépôts à la caisse":"Dépôts","WhatsApp étudiants":"WhatsApp","Suivi des étudiants":"Suivi","Synthèses et rapports":"Synthèses","Catalogue des formations":"Catalogue","Rapport de la semaine":"Rapport","Mes étudiants":"Étudiants","Journal d'audit":"Audit"}[l] || l);
   const lien = x => `<a href="#${x.id}" ${x.id===courant?'aria-current="page"':""}>${icoDe(x.id)}<span>${esc(court(x.l))}</span>${x.n?`<b class="nb">${x.n>99?"99+":x.n}</b>`:""}</a>`;
   const p3 = pr.slice(0,3);
   bn.innerHTML = p3.slice(0,2).map(lien).join("") + `<button type="button" class="fab" id="bFab" aria-label="Actions rapides">${ICO.nouveau}</button>` + (p3[2] ? lien(p3[2]) : "<span></span>")
@@ -1495,8 +1551,9 @@ function principauxDe(r){
     encaissement:["accueil","registre","messages","consignes"], caisse:["accueil","caisse","messages","consignes"],
     tresorerie:["accueil","consignes","cotisations","notifications"], formation:["accueil","catalogue","pedagogie","consignes"],
     pedagogie:["accueil","pedagogie","catalogue","messages"], secretaire:["accueil","suivi","synthese","consignes"],
-    tuteur:["t-accueil","t-hebdo","t-rapports","t-consignes"]
-  })[r] || ["accueil","consignes","notifications"];
+    tuteur:["t-accueil","t-hebdo","t-rapports","t-consignes"],
+    responsable:["accueil","taches","reunions","consignes"], membre:["accueil","taches","reunions","consignes"]
+  })[r] || ["accueil","taches","consignes","notifications"];
 }
 
 /* =====================================================================
@@ -2033,7 +2090,7 @@ const derniereSemaineDue = () => semainesDues()[0] || null;
 const fonctionDe = r => ROLES[r]?.l || r || "";
 const trace = (action, statut, obs) => ({le:nowISO(), par:compte()?.nom||"", uid:S.uid, email:S.email, fonction:fonctionDe(role()), action, statut:statut||"", obs:obs||""});
 const ajoute = (h, e) => [...(h||[]), e];
-const tuteursActifs = () => Object.entries(S.comptes).filter(([,c])=>c.role==="tuteur" && c.actif!==false).map(([em,c])=>({em, ...c})).sort((a,b)=>a.nom.localeCompare(b.nom,"fr"));
+const tuteursActifs = () => Object.entries(S.comptes).filter(([,c])=>(c.role==="tuteur" || (c.rolesSup||[]).includes("tuteur")) && c.actif!==false).map(([em,c])=>({em, ...c})).sort((a,b)=>a.nom.localeCompare(b.nom,"fr"));
 const affDe = em => S.affectations.find(a=>a.id===em)?.etudiants || [];
 const rhId = (em, s) => `${em}_${s}`;
 const rhDe = (em, s) => S.rapportsHebdo.find(r=>r.id===rhId(em,s));
@@ -2777,6 +2834,9 @@ function actionsRapides(){
     can("peda.saisir") && ["Pointer une séance", ICO.pedagogie, () => formSeance()],
     r==="formation" && ["Nouvelle formation", ICO.catalogue, () => formFormation()],
     presidence() && ["Donner une consigne", ICO.consignes, () => formConsigne()],
+    presidence() && ["Nouvelle décision", ICO.decisions, () => formDecision()],
+    peutCreerTache() && ["Attribuer une tâche", ICO.taches, () => formTache()],
+    peutConvoquer() && ["Programmer une réunion", ICO.reunions, () => formReunion()],
     r==="tuteur" && ["Rapport de la semaine", ICO.hebdo, go("t-hebdo")],
     r==="tuteurs" && ["Rapports à valider", ICO.suivi, go("suivi")],
     ["accompagnement","tuteurs","formation"].includes(r) && ["Ouvrir un suivi", ICO.suivi, () => formDossier(r==="accompagnement" ? {} : {priorite:"Haute"})],
@@ -2834,6 +2894,428 @@ function decisionNotes(code, act){
 }
 
 /* ======== Données en direct ======== */
+/* =====================================================================
+   GOUVERNANCE — Cahier des charges 2026-2027, phases 1 et 2
+   Organigramme, fonctions multiples (un seul compte), commissions,
+   décisions de la présidence, tâches, réunions, journal d'audit.
+   ===================================================================== */
+const COMMISSIONS = [
+  ["FORMATION","Formation, Projets et Accompagnement Académique — CVPB Académie"],
+  ["COMMUNICATION","Communication"],
+  ["CAISSE","Caisse et Encadrement Financier"],
+  ["TUTORAT","Tutorat"],
+  ["LOGISTIQUE","Organisation et Logistique"],
+  ["SOCIAL","Affaires Sociales"]
+];
+const comNom = c => c ? ((COMMISSIONS.find(x=>x[0]===c)||[])[1] || c) : "Bureau";
+const comCourt = c => c ? comNom(c).split(" — ")[0].replace("Formation, Projets et Accompagnement Académique","Formation") : "Bureau";
+/* Fonctions de l'organigramme et rôle qu'elles confèrent dans l'application */
+const FONCTIONS = {
+  PRESIDENT:{t:"Président", r:"president", rang:1, bureau:true},
+  VICE_PRESIDENT:{t:"Vice-président", r:"vicepresident", rang:2, bureau:true},
+  SG1:{t:"Secrétaire général 1 — Coordination générale", r:"secretaire", rang:3, bureau:true},
+  SG2:{t:"Secrétaire général 2 — Supervision et suivi", r:"secretaire", rang:4, bureau:true},
+  SG3:{t:"Secrétaire général 3 — Opérations et vie communautaire", r:"secretaire", rang:5, bureau:true},
+  RESP_SUIVI:{t:"Responsable Suivi et Accompagnement", r:"accompagnement", rang:8, bureau:true},
+  RESP_COM:{t:"Responsable", resp:true, rang:10},
+  ENCADREMENT:{t:"Encadrement", r:"membre", rang:20},
+  MEMBRE:{t:"Membre d'équipe", r:"membre", rang:21},
+  FORMATEUR:{t:"Formateur de l'Académie", r:"pedagogie", rang:30},
+  TUTEUR:{t:"Tuteur", r:"tuteur", rang:31}
+};
+const roleDeFonction = f => f.code==="RESP_COM" ? ({FORMATION:"formation", TUTORAT:"tuteurs", CAISSE:"caisse"}[f.com] || "responsable") : FONCTIONS[f.code]?.r;
+const titreFonction = f => (FONCTIONS[f.code]?.t || f.code) + (f.code==="RESP_COM" && f.com==="TUTORAT" ? " des Tuteurs" : "") + (f.com && !FONCTIONS[f.code]?.bureau ? " — " + comCourt(f.com) : "");
+/* Organigramme transmis dans le cahier des charges (noms à confirmer avant l'ouverture des comptes) */
+const ORGA_CDC = [
+  ["Zak","PRESIDENT",null],["Kossonou Abo Henaï","VICE_PRESIDENT",null],
+  ["KONAN Jean Nathanaël","SG1",null],["Koadoha Koffi Jonathan","SG2",null],["Ko Nadre Evan","SG3",null],
+  ["KOFFI Boris","RESP_COM","FORMATION"],["Kadjo Christ","MEMBRE","FORMATION"],["Bilé Yann Eddy","MEMBRE","FORMATION"],
+  ["OUEDRAOGO Ibrahim","RESP_COM","COMMUNICATION"],["KONAN Candy","MEMBRE","COMMUNICATION"],["Yao Adjoua","MEMBRE","COMMUNICATION"],["N'Zi Yao Emmanuel","MEMBRE","COMMUNICATION"],
+  ["Gaëlle Alingué","RESP_COM","CAISSE"],["Sebré Hanifa","ENCADREMENT","CAISSE"],
+  ["Dadzie Crédot","RESP_COM","TUTORAT"],["Yamyaogo Inoussa","RESP_COM","TUTORAT"],
+  ["Boli Bi Junior","RESP_COM","LOGISTIQUE"],["OUATTARA Abdoul Aziz","RESP_COM","LOGISTIQUE"],
+  ["Assandé Anne","RESP_COM","SOCIAL"],["Sylla Salimata","RESP_COM","SOCIAL"],["Koné Ramatoulaye","RESP_COM","SOCIAL"]
+];
+
+/* ---- Droits cumulés (tous les rôles de la personne, comme les règles du serveur) ---- */
+const tousMesRoles = () => { const c = compte(); if (!c) return []; return presidence() ? ["president"] : rolesDe(c); };
+const aRole = (...l) => presidence() || tousMesRoles().some(r=>l.includes(r));
+const gouvSup = () => aRole("vicepresident","secretaire");          // voit toutes les décisions, tâches et réunions
+const pilote = () => aRole("secretaire");                           // attribue à tous, convoque toute réunion (Présidence incluse)
+const mesComs = () => compte()?.commissions || [];
+const mesComsResp = () => compte()?.commissionsResp || [];
+const membresDe = com => Object.entries(S.comptes).filter(([,c])=>c.actif!==false && (c.commissions||[]).includes(com)).map(([em,c])=>({em, ...c})).sort((a,b)=>a.nom.localeCompare(b.nom,"fr"));
+const actifsTous = () => Object.entries(S.comptes).filter(([,c])=>c.actif!==false).map(([em,c])=>({em, ...c})).sort((a,b)=>String(a.nom).localeCompare(String(b.nom),"fr"));
+const nomDe = em => S.comptes[em]?.nom || em;
+const ek = em => String(em).replace(/[.@]/g,"_");
+const gid = p => p + Date.now().toString(36) + Math.random().toString(36).slice(2,6);
+const dtFR = s => s ? new Date(s).toLocaleString("fr-FR",{weekday:"short",day:"numeric",month:"short",hour:"2-digit",minute:"2-digit"}) : "—";
+const notifier = (emails, texte, action) => { const L = [...new Set((emails||[]).filter(e=>e && e!==S.email))]; log(action||"gouvernance", texte, [...L.map(e=>"e:"+e), "secretaire"]); };
+
+/* Journal d'audit : ajouts seulement, aucune modification ni suppression possible (règles du serveur) */
+function audit(action, objet, ref, details){
+  if (!S.db || !S.uid) return;
+  S.db.doc("audit/"+gid("A")).set({le:nowISO(), par:S.uid, parEmail:S.email, parNom:compte()?.nom||"", role:role(), action, objet, ref:ref||null, details:details||null}).catch(()=>{});
+}
+
+/* ---------------------------- Organigramme ---------------------------- */
+function vOrganigramme(){
+  const L = actifsTous().flatMap(c => ((c.fonctions||[]).length ? c.fonctions : c.role==="president" ? [{code:"PRESIDENT", com:null}] : []).map(f => ({...f, em:c.em, nom:c.nom, connecte:!!c.uid || c.role==="president"})));
+  const carte = x => `<div class="prow"><span><b>${esc(x.nom)}</b><br><span class="small muted">${esc(titreFonction(x))}</span></span>${x.connecte?"":'<span class="pill warn">Jamais connecté</span>'}</div>`;
+  const bureau = L.filter(x=>FONCTIONS[x.code]?.bureau).sort((a,b)=>FONCTIONS[a.code].rang-FONCTIONS[b.code].rang);
+  let cdc = "";
+  if (presidence()){
+    const noms = new Map(Object.entries(S.comptes).map(([em,c])=>[normNom(c.nom), em]));
+    noms.set(normNom("Zak"), S.email);
+    const ouverts = ORGA_CDC.filter(([n])=>noms.has(normNom(n))).length;
+    cdc = `<details class="card" ${ouverts<ORGA_CDC.length?"open":""}><summary><b>Organigramme du cahier des charges</b> · ${ouverts}/${ORGA_CDC.length} comptes ouverts</summary>
+      <p class="small muted">Noms repris du cahier des charges 2026-2027, à confirmer. Touchez « Ouvrir » pour créer le compte avec sa fonction : il ne reste qu'à saisir l'adresse UVCI.</p>
+      ${ORGA_CDC.map(([n,code,com],i)=>{ const em = noms.get(normNom(n)); return `<div class="prow"><span><b>${esc(n)}</b><br><span class="small muted">${esc(titreFonction({code,com}))}</span></span>${em?'<span class="pill ok">Compte ouvert</span>':`<button class="btn sm" data-orga="${i}">Ouvrir</button>`}</div>`; }).join("")}</details>`;
+  }
+  return `<div class="spread"><div><h2>Organigramme ${esc(P().annee||"")}</h2><p class="small muted">Fonctions actives. Une personne peut cumuler plusieurs fonctions avec un seul compte.</p></div></div>
+    ${cdc}
+    <div class="card"><h3>Bureau exécutif</h3>${bureau.map(carte).join("") || '<div class="empty">Aucune fonction de bureau renseignée. La Présidence les attribue dans Administration › Comptes.</div>'}</div>
+    <div class="cards2">${COMMISSIONS.map(([code]) => { const M = L.filter(x=>x.com===code && !FONCTIONS[x.code]?.bureau).sort((a,b)=>(FONCTIONS[a.code]?.rang||99)-(FONCTIONS[b.code]?.rang||99)); return `<div class="card"><h3>${esc(comNom(code))}</h3>${M.map(carte).join("") || '<p class="small muted">Titulaires à nommer.</p>'}</div>`; }).join("")}</div>`;
+}
+function bindOrganigramme(){
+  $("#main").querySelectorAll("[data-orga]").forEach(b => b.onclick = () => { const [nom, code, com] = ORGA_CDC[Number(b.dataset.orga)]; formCompte(null, {nom, fonctions:[{code, com}]}); });
+}
+
+/* ------------------------------ Décisions ------------------------------ */
+const DEC_ST = ["Brouillon","Émise","Examen SG","Confiée","En cours","Exécutée","Suspendue","Annulée"];
+const DEC_OUVERTES = ["Émise","Examen SG","Confiée","En cours","Suspendue"];
+const EXEC_ST = ["À démarrer","En cours","Bloquée","Terminée"];
+const clsSt = s => ({"Exécutée":"ok","Terminée":"ok","Tenue":"ok","Présent":"ok","Annulée":"mute","Brouillon":"mute","Bloquée":"bad","Suspendue":"warn","Reportée":"warn","Absent":"bad","Excusé":"warn","Urgente":"bad","Haute":"warn"}[s] || "");
+const decRetard = d => d.echeance && d.echeance < today() && DEC_OUVERTES.includes(d.statut);
+const mesDecisions = () => S.decisions.filter(d => (d.executants||[]).includes(S.email) && d.statut!=="Brouillon");
+
+function vDecisions(){
+  const f = S.decf ||= {st:"ouvertes"};
+  let L = (gouvSup() ? S.decisions : mesDecisions()).slice().sort((a,b)=>String(b.ref).localeCompare(String(a.ref)));
+  const ouv = L.filter(d=>DEC_OUVERTES.includes(d.statut)), ret = L.filter(decRetard);
+  if (f.st==="ouvertes") L = L.filter(d=>DEC_OUVERTES.includes(d.statut) || d.statut==="Brouillon");
+  else if (f.st==="retard") L = L.filter(decRetard);
+  else if (f.st) L = L.filter(d=>d.statut===f.st);
+  return `<div class="spread"><div><h2>Décisions de la Présidence</h2><p class="small muted">${gouvSup()?"Le Secrétariat général examine la formalisation, formule des observations et suit l'exécution, sans droit de veto.":"Les décisions dont vous êtes responsable d'exécution."}</p></div>${presidence()?`<button class="btn primary" id="newDec">${ICO.nouveau} Nouvelle décision</button>`:""}</div>
+  <div class="kpis">${kpi(ouv.length,"en cours d'exécution")}${kpi(ret.length,"échéance dépassée",ret.length?"bad":"g")}${kpi(L.filter(d=>["Émise","Examen SG"].includes(d.statut)).length,"sans responsable")}${kpi(S.decisions.filter(d=>d.statut==="Exécutée").length,"exécutées","g")}</div>
+  <div class="filters"><select id="decf">${opts([["ouvertes","À suivre"],["retard","Échéance dépassée"],["","Toutes"],...DEC_ST.map(s=>[s,s])], f.st)}</select><span></span></div>
+  ${L.length?`<div class="clist">${L.map(d=>{ const me = d.exec?.[ek(S.email)]; return `<button class="citem ${decRetard(d)?"late":""} ${d.statut==="Exécutée"?"done":""}" data-dec="${esc(d.id)}">
+    <span class="t"><b>${esc(d.ref)}</b> · ${esc(d.titre)}</span>
+    <span class="m"><span class="pill ${clsSt(d.statut)}">${esc(d.statut)}</span>${d.priorite!=="Normale"?`<span class="pill ${clsSt(d.priorite)}">${esc(d.priorite)}</span>`:""}<span>Échéance ${dFR(d.echeance)}</span>${(d.executants||[]).length?`<span>→ ${esc(d.executants.map(nomDe).join(", "))}</span>`:""}${me?`<span class="pill ${clsSt(me.statut)}">Ma part : ${esc(me.statut)}</span>`:""}</span></button>`; }).join("")}</div>`:`<div class="empty">Aucune décision pour ce filtre.</div>`}`;
+}
+function bindDecisions(){
+  $("#newDec") && ($("#newDec").onclick = () => formDecision());
+  $("#decf") && ($("#decf").onchange = e => { S.decf.st = e.target.value; render(); });
+  $("#main").querySelectorAll("[data-dec]").forEach(b => b.onclick = () => ficheDecision(b.dataset.dec));
+}
+function formDecision(d, prefill){
+  const isNew = !d; d = d || {priorite:"Normale", date:today(), ...(prefill||{})};
+  openSheet(`<h2>${isNew?"Nouvelle décision":"Modifier "+esc(d.ref)}</h2>
+    <label class="f" for="d_t">Objet<input type="text" id="d_t" maxlength="150" value="${esc(d.titre)}"></label>
+    <label class="f" for="d_x">Description<textarea id="d_x" maxlength="3000" placeholder="Ce qui est décidé, le résultat attendu, les moyens.">${esc(d.description)}</textarea></label>
+    <div class="g2"><label class="f" for="d_d">Date<input type="date" id="d_d" value="${esc(d.date)}"></label><label class="f" for="d_e">Échéance<input type="date" id="d_e" value="${esc(d.echeance||"")}"></label></div>
+    <label class="f" for="d_p">Priorité<select id="d_p">${opts(["Basse","Normale","Haute","Urgente"], d.priorite)}</select></label>
+    ${d.reunion?`<p class="small muted">Décision issue de la réunion « ${esc(d.reunionTitre||"")} ».</p>`:""}
+    <p class="hint">La décision est d'abord enregistrée en brouillon. Vous l'émettez, puis vous désignez les responsables d'exécution.</p>
+    <div class="row"><button class="btn primary" id="d_ok">Enregistrer</button><button class="btn" data-close>Annuler</button></div>`);
+  $("#d_ok").onclick = async () => {
+    const data = {titre:$("#d_t").value.trim(), description:$("#d_x").value.trim(), date:$("#d_d").value||today(), echeance:$("#d_e").value||"", priorite:$("#d_p").value};
+    if (!data.titre || !data.description) return toast("L'objet et la description sont obligatoires.");
+    if (data.echeance && data.echeance < data.date) return toast("L'échéance ne peut pas précéder la date de la décision.");
+    if (isNew){
+      const an = data.date.slice(0,4), n = S.decisions.filter(x=>String(x.ref).startsWith(`DEC-${an}-`)).reduce((m,x)=>Math.max(m, parseInt(String(x.ref).split("-")[2],10)||0),0) + 1;
+      const ref = `DEC-${an}-${String(n).padStart(3,"0")}`, id = ref;
+      const doc = {...data, ref, statut:"Brouillon", executants:[], exec:{}, observations:[], reunion:d.reunion||null, reunionTitre:d.reunionTitre||null, creePar:S.email, creeParNom:compte().nom, creeLe:nowISO(), historique:[trace("Création","Brouillon")]};
+      if (await write(()=>S.db.doc("decisions/"+id).set(doc), `Décision ${ref} enregistrée en brouillon`)){ audit("creation","decision",ref,{titre:data.titre}); closeSheet(); setTimeout(()=>ficheDecision(id), 300); }
+    } else if (await write(()=>S.db.doc("decisions/"+d.id).update({...data, historique:ajoute(d.historique, trace("Modification", d.statut))}), "Décision modifiée")){ audit("modification","decision",d.ref,data); closeSheet(); }
+  };
+}
+function ficheDecision(id){
+  const d = S.decisions.find(x=>x.id===id); if (!d) return toast("Décision introuvable.");
+  const pres = presidence(), sg = aRole("secretaire") && !pres, moi = (d.executants||[]).includes(S.email), me = d.exec?.[ek(S.email)];
+  const actions = [];
+  if (pres){
+    if (d.statut==="Brouillon") actions.push(`<button class="btn" id="dEdit">Modifier</button><button class="btn primary" data-dst="Émise">Émettre</button>`);
+    if (["Émise","Examen SG","Confiée","En cours","Suspendue"].includes(d.statut)) actions.push(`<button class="btn primary" id="dAss">Désigner les responsables</button>`);
+    if (["Confiée","En cours"].includes(d.statut)) actions.push(`<button class="btn vert" data-dst="Exécutée">Clore : exécutée</button>`);
+    if (d.statut==="Suspendue") actions.push(`<button class="btn" data-dst="${(d.executants||[]).length?"Confiée":"Émise"}">Reprendre</button>`);
+    if (DEC_OUVERTES.includes(d.statut) && d.statut!=="Suspendue") actions.push(`<button class="btn" data-dst="Suspendue">Suspendre</button>`);
+    if (!["Exécutée","Annulée"].includes(d.statut)) actions.push(`<button class="btn danger" data-dst="Annulée">Annuler</button>`);
+  }
+  if (sg && d.statut==="Émise") actions.push(`<button class="btn" data-dst="Examen SG">Ouvrir l'examen du Secrétariat général</button>`);
+  openSheet(`<div class="spread"><h2>${esc(d.ref)}</h2><span class="pill ${clsSt(d.statut)}">${esc(d.statut)}</span></div>
+    <h3>${esc(d.titre)}</h3><div class="quote">${esc(d.description)}</div>
+    <dl class="dl"><dt>Décidée le</dt><dd>${dFR(d.date)} par ${esc(d.creeParNom||"la Présidence")}</dd><dt>Échéance</dt><dd>${dFR(d.echeance)}${decRetard(d)?' <span class="pill bad">dépassée</span>':""}</dd><dt>Priorité</dt><dd>${esc(d.priorite)}</dd>${d.reunionTitre?`<dt>Réunion</dt><dd>${esc(d.reunionTitre)}</dd>`:""}</dl>
+    <h3>Responsables d'exécution</h3>
+    ${(d.executants||[]).map(em=>{ const x = d.exec?.[ek(em)]||{statut:"À démarrer"}; return `<div class="prow"><span><b>${esc(nomDe(em))}</b>${x.attendu?`<br><span class="small muted">${esc(x.attendu)}</span>`:""}${x.note?`<br><span class="small">${esc(x.note)}</span>`:""}</span><span class="pill ${clsSt(x.statut)}">${esc(x.statut)}</span></div>`; }).join("") || '<p class="small muted">Aucun responsable désigné.</p>'}
+    ${moi && !["Exécutée","Annulée","Suspendue"].includes(d.statut)?`<div class="card"><h3>Ma part</h3><label class="f" for="d_ms">Avancement<select id="d_ms">${opts(EXEC_ST, me?.statut||"À démarrer")}</select></label><label class="f" for="d_mn">Point d'avancement<textarea id="d_mn" maxlength="1000" placeholder="Obligatoire si l'exécution est bloquée.">${esc(me?.note||"")}</textarea></label><button class="btn primary" id="dMe">Enregistrer mon avancement</button></div>`:""}
+    <h3>Observations et contrôle</h3>
+    ${(d.observations||[]).map(o=>`<div class="quote"><span class="small"><b>${esc(o.type)}</b> · ${esc(o.nom)} · ${dtFR(o.le)}</span><br>${esc(o.texte)}</div>`).join("") || '<p class="small muted">Aucune observation.</p>'}
+    ${(sg || pres) && d.statut!=="Brouillon"?`<label class="f" for="d_ob">${pres?"Réponse de la Présidence":"Observation du Secrétariat général"}<textarea id="d_ob" maxlength="1500"></textarea></label>${sg?`<label class="f" for="d_ot">Type<select id="d_ot">${opts(["Observation du Secrétariat général","Contrôle d'exécution"])}</select></label>`:""}<button class="btn" id="dObs">Ajouter</button>`:""}
+    <details><summary class="small">Historique (${(d.historique||[]).length})</summary>${(d.historique||[]).map(h=>`<div class="small">${dtFR(h.le)} · ${esc(h.par)} · ${esc(h.action)}${h.obs?` : ${esc(h.obs)}`:""}</div>`).join("")}</details>
+    <div class="row">${actions.join("")}<button class="btn ghost" data-close>Fermer</button></div>`);
+  const maj = async (data, msg, act, dests) => { if (await write(()=>S.db.doc("decisions/"+id).update(data), msg)){ audit(act, "decision", d.ref, data.statut?{statut:data.statut}:null); if (dests) notifier(dests, `Décision ${d.ref} : ${msg.toLowerCase()} — ${d.titre}`, "decision"); closeSheet(); } };
+  $("#dEdit") && ($("#dEdit").onclick = () => { closeSheet(); setTimeout(()=>formDecision(d), 60); });
+  $("#dAss") && ($("#dAss").onclick = () => { closeSheet(); setTimeout(()=>formExecutants(d), 60); });
+  $("#sheet").querySelectorAll("[data-dst]").forEach(b => {
+    const st = b.dataset.dst, run = () => {
+      const motif = ["Suspendue","Annulée"].includes(st) ? prompt("Motif (obligatoire) :") : "";
+      if (["Suspendue","Annulée"].includes(st) && !motif) return toast("Le motif est obligatoire.");
+      const data = {statut:st, historique:ajoute(d.historique, trace(st, st, motif||""))};
+      if (st==="Émise") data.emiseLe = nowISO(); if (st==="Exécutée") data.executeeLe = nowISO();
+      maj(data, `Décision ${st.toLowerCase()}`, "statut_"+st, d.executants);
+    };
+    if (["Annulée","Exécutée"].includes(st)) confirmBtn(b, "Confirmer", run); else b.onclick = run;
+  });
+  $("#dMe") && ($("#dMe").onclick = () => {
+    const statut = $("#d_ms").value, note = $("#d_mn").value.trim();
+    if (statut==="Bloquée" && !note) return toast("Expliquez le blocage.");
+    const data = {exec:{[ek(S.email)]:{statut, note, le:nowISO()}}, historique:ajoute(d.historique, trace("Avancement : "+statut, d.statut, note))};
+    if (statut==="En cours" && d.statut==="Confiée") data.statut = "En cours";
+    maj(data, "Avancement enregistré", "execution", ["Terminée","Bloquée"].includes(statut) ? [d.creePar] : null);
+  });
+  $("#dObs") && ($("#dObs").onclick = () => {
+    const texte = $("#d_ob").value.trim(); if (!texte) return toast("Rédigez l'observation.");
+    const type = pres ? "Réponse de la Présidence" : $("#d_ot").value;
+    maj({observations:[...(d.observations||[]), {type, texte, nom:compte().nom, email:S.email, le:nowISO()}], historique:ajoute(d.historique, trace(type, d.statut))}, "Observation ajoutée", "observation", pres ? [] : [d.creePar]);
+  });
+}
+function formExecutants(d){
+  const P0 = actifsTous().filter(c=>c.role!=="tuteur" || (c.rolesSup||[]).length);
+  openSheet(`<h2>Responsables d'exécution · ${esc(d.ref)}</h2>
+    <div class="checks">${P0.map(c=>`<label><input type="checkbox" name="dx" value="${esc(c.em)}" ${(d.executants||[]).includes(c.em)?"checked":""}> ${esc(c.nom)} <span class="muted small">· ${esc((c.fonctions||[]).map(titreFonction).join(", ") || ROLES[c.role]?.l || "")}</span></label>`).join("")}</div>
+    <label class="f" for="dx_a">Ce qui est attendu (pour les nouveaux désignés)<textarea id="dx_a" maxlength="1000"></textarea></label>
+    <div class="row"><button class="btn primary" id="dx_ok">Désigner</button><button class="btn" data-close>Annuler</button></div>`);
+  $("#dx_ok").onclick = async () => {
+    const L = [...$("#sheet").querySelectorAll('input[name="dx"]:checked')].map(i=>i.value);
+    if (!L.length) return toast("Choisissez au moins une personne.");
+    const nouveaux = L.filter(em=>!(d.executants||[]).includes(em)), attendu = $("#dx_a").value.trim();
+    const exec = {...(d.exec||{})}; for (const em of nouveaux) exec[ek(em)] = {statut:"À démarrer", attendu, le:nowISO()};
+    for (const k of Object.keys(exec)) if (!L.some(em=>ek(em)===k)) delete exec[k];
+    const data = {executants:L, exec, historique:ajoute(d.historique, trace("Désignation : "+L.map(nomDe).join(", "), d.statut))};
+    if (["Émise","Examen SG"].includes(d.statut)) data.statut = "Confiée";
+    const {id:_id, ...reste} = d;
+    if (await write(()=>S.db.doc("decisions/"+d.id).set({...reste, ...data}), "Responsables désignés")){
+      audit("designation","decision",d.ref,{executants:L}); notifier(nouveaux, `Décision à exécuter : ${d.ref} — ${d.titre}${d.echeance?` (échéance ${dFR(d.echeance)})`:""}`, "decision"); closeSheet();
+    }
+  };
+}
+
+/* -------------------------------- Tâches -------------------------------- */
+const TACHE_OUV = ["À faire","En cours","Bloquée"];
+const tRetard = t => t.echeance && t.echeance < today() && TACHE_OUV.includes(t.statut);
+const executeur = t => t.dest===S.email || (!t.dest && !!t.commission && mesComs().includes(t.commission));
+const peutCreerTache = () => pilote() || mesComsResp().length > 0;
+function vTaches(){
+  const f = S.taf ||= {st:"ouvertes", qui: gouvSup() ? "" : "moi"};
+  let L = S.taches.slice();
+  if (f.qui==="moi") L = L.filter(t=>executeur(t) || t.auteurEmail===S.email);
+  if (f.st==="ouvertes") L = L.filter(t=>TACHE_OUV.includes(t.statut)); else if (f.st==="retard") L = L.filter(tRetard); else if (f.st) L = L.filter(t=>t.statut===f.st);
+  L.sort((a,b)=>(TACHE_OUV.indexOf(a.statut)+1||9)-(TACHE_OUV.indexOf(b.statut)+1||9) || String(a.echeance||"9").localeCompare(String(b.echeance||"9")));
+  const mes = S.taches.filter(t=>executeur(t) && TACHE_OUV.includes(t.statut));
+  return `<div class="spread"><div><h2>Tâches</h2><p class="small muted">Tâches attribuées à une personne ou à une équipe (commission), avec échéance et compte rendu.</p></div>${peutCreerTache()?`<button class="btn primary" id="newT">${ICO.nouveau} Nouvelle tâche</button>`:""}</div>
+  <div class="kpis">${kpi(mes.length,"tâches à faire pour moi")}${kpi(mes.filter(tRetard).length,"en retard",mes.filter(tRetard).length?"bad":"g")}${gouvSup()?kpi(S.taches.filter(tRetard).length,"en retard (toute l'équipe)",S.taches.filter(tRetard).length?"bad":"g"):""}${kpi(S.taches.filter(t=>t.statut==="Terminée").length,"terminées","g")}</div>
+  <div class="filters"><select id="taf">${opts([["ouvertes","Ouvertes"],["retard","En retard"],["Terminée","Terminées"],["","Toutes"]], f.st)}</select>${gouvSup()?`<select id="taq">${opts([["","Toute l'équipe"],["moi","Les miennes"]], f.qui)}</select>`:"<span></span>"}</div>
+  ${L.length?`<div class="clist">${L.map(t=>`<button class="citem ${tRetard(t)?"late":""} ${t.statut==="Terminée"?"done":""}" data-tache="${esc(t.id)}">
+    <span class="t">${["Urgente","Haute"].includes(t.priorite)?`<span class="pill ${clsSt(t.priorite)}">${esc(t.priorite)}</span> `:""}${esc(t.titre)}</span>
+    <span class="m"><span class="pill ${clsSt(t.statut)}">${esc(t.statut)}</span><span>→ ${esc(t.dest ? (t.destNom||nomDe(t.dest)) : "Équipe " + comCourt(t.commission))}</span><span>Échéance ${dFR(t.echeance)}</span><span>· par ${esc(t.auteurNom)}</span></span></button>`).join("")}</div>`:`<div class="empty">Aucune tâche pour ce filtre.</div>`}`;
+}
+function bindTaches(){
+  $("#newT") && ($("#newT").onclick = () => formTache());
+  $("#taf") && ($("#taf").onchange = e => { S.taf.st = e.target.value; render(); });
+  $("#taq") && ($("#taq").onchange = e => { S.taf.qui = e.target.value; render(); });
+  $("#main").querySelectorAll("[data-tache]").forEach(b => b.onclick = () => ficheTache(b.dataset.tache));
+}
+function formTache(prefill){
+  const pre = prefill || {}, coms = pilote() ? COMMISSIONS.map(c=>c[0]) : mesComsResp();
+  const gens = pilote() ? actifsTous() : [...new Map(mesComsResp().flatMap(membresDe).map(c=>[c.em,c])).values()];
+  const restreint = pre.convoques ? gens.filter(c=>pre.convoques.includes(c.em)) : gens;
+  openSheet(`<h2>Nouvelle tâche</h2>
+    <label class="f" for="t_t">Intitulé<input type="text" id="t_t" maxlength="150" value="${esc(pre.titre||"")}"></label>
+    <label class="f" for="t_x">Description<textarea id="t_x" maxlength="2000"></textarea></label>
+    <label class="f" for="t_m">Attribuer à<select id="t_m">${opts([["p","Une personne"],["e","Une équipe (commission)"]],"p")}</select></label>
+    <label class="f" id="t_pw" for="t_d">Personne<select id="t_d">${opts(restreint.filter(c=>c.em!==S.email || pilote()).map(c=>[c.em, c.nom + ((c.fonctions||[]).length?" · "+titreFonction(c.fonctions[0]):"")]), "", "Choisir…")}</select></label>
+    <label class="f" id="t_cw" for="t_c" hidden>Commission<select id="t_c">${opts(coms.map(c=>[c, comNom(c)]), "", "Choisir…")}</select></label>
+    <div class="g2"><label class="f" for="t_e">Échéance<input type="date" id="t_e" min="${today()}"></label><label class="f" for="t_p">Priorité<select id="t_p">${opts(["Basse","Normale","Haute","Urgente"],"Normale")}</select></label></div>
+    ${!pilote()?'<p class="hint">En tant que responsable, vous attribuez des tâches à votre commission et à ses membres.</p>':""}
+    <div class="row"><button class="btn primary" id="t_ok">Attribuer</button><button class="btn" data-close>Annuler</button></div>`);
+  const up = () => { const e = $("#t_m").value==="e"; $("#t_pw").hidden = e; $("#t_cw").hidden = !e; };
+  $("#t_m").onchange = up; up();
+  $("#t_ok").onclick = async () => {
+    const equipe = $("#t_m").value==="e", dest = equipe ? null : $("#t_d").value, com = equipe ? $("#t_c").value : null;
+    const titre = $("#t_t").value.trim();
+    if (!titre) return toast("Indiquez l'intitulé.");
+    if (!equipe && !dest) return toast("Choisissez la personne.");
+    if (equipe && !com) return toast("Choisissez la commission.");
+    /* Un responsable rattache la tâche à sa commission (contrôlé par le serveur) */
+    const commission = com || (pilote() ? null : (mesComsResp().find(c=>(S.comptes[dest]?.commissions||[]).includes(c)) || null));
+    const id = gid("T"), data = {titre, description:$("#t_x").value.trim(), dest, destNom:dest?nomDe(dest):null, commission, echeance:$("#t_e").value||"", priorite:$("#t_p").value, statut:"À faire", note:"", auteurEmail:S.email, auteurNom:compte().nom, decision:pre.decision||null, reunion:pre.reunion||null, reunionTitre:pre.reunionTitre||null, creeLe:nowISO(), historique:[trace("Attribution","À faire")]};
+    if (await write(()=>S.db.doc("taches/"+id).set(data), "Tâche attribuée")){
+      audit("creation","tache",id,{titre, dest, commission});
+      notifier(dest ? [dest] : membresDe(com).map(c=>c.em), `Nouvelle tâche : ${titre}${data.echeance?` (échéance ${dFR(data.echeance)})`:""}`, "tache");
+      closeSheet();
+    }
+  };
+}
+function ficheTache(id){
+  const t = S.taches.find(x=>x.id===id); if (!t) return toast("Tâche introuvable.");
+  const ex = executeur(t), auteur = t.auteurEmail===S.email || pilote();
+  openSheet(`<div class="spread"><h2>${esc(t.titre)}</h2><span class="pill ${clsSt(t.statut)}">${esc(t.statut)}</span></div>
+    ${t.description?`<div class="quote">${esc(t.description)}</div>`:""}
+    <dl class="dl"><dt>Pour</dt><dd>${esc(t.dest ? (t.destNom||nomDe(t.dest)) : "Équipe " + comNom(t.commission))}</dd><dt>Par</dt><dd>${esc(t.auteurNom)}</dd><dt>Échéance</dt><dd>${dFR(t.echeance)}${tRetard(t)?' <span class="pill bad">en retard</span>':""}</dd>${t.reunionTitre?`<dt>Réunion</dt><dd>${esc(t.reunionTitre)}</dd>`:""}</dl>
+    ${t.note?`<h3>Compte rendu</h3><div class="quote">${esc(t.note)}</div>`:""}
+    ${ex && TACHE_OUV.includes(t.statut)?`<label class="f" for="t_n">Compte rendu / point d'avancement<textarea id="t_n" maxlength="1500">${esc(t.note||"")}</textarea></label>
+      <div class="row">${["En cours","Bloquée","Terminée"].filter(s=>s!==t.statut).map(s=>`<button class="btn ${s==="Terminée"?"vert":s==="Bloquée"?"danger":""}" data-tst="${s}">${{"En cours":"Je m'en occupe","Bloquée":"Signaler un blocage","Terminée":"Marquer comme terminée"}[s]}</button>`).join("")}</div>`:""}
+    <details><summary class="small">Historique</summary>${(t.historique||[]).map(h=>`<div class="small">${dtFR(h.le)} · ${esc(h.par)} · ${esc(h.action)}${h.obs?` : ${esc(h.obs)}`:""}</div>`).join("")}</details>
+    <div class="row">${auteur && TACHE_OUV.includes(t.statut)?`<button class="btn danger" id="tAnn">Annuler la tâche</button>`:""}${auteur && ["Terminée","Annulée"].includes(t.statut)?`<button class="btn" id="tRouv">Rouvrir</button>`:""}<button class="btn ghost" data-close>Fermer</button></div>`);
+  const maj = async (data, msg, txt) => { if (await write(()=>S.db.doc("taches/"+id).update({...data, majLe:nowISO()}), msg)){ audit("statut_"+data.statut,"tache",id,{titre:t.titre, note:data.note||""}); if (txt) notifier([t.auteurEmail], txt, "tache"); closeSheet(); } };
+  $("#sheet").querySelectorAll("[data-tst]").forEach(b => b.onclick = () => {
+    const st = b.dataset.tst, note = $("#t_n").value.trim();
+    if (st==="Bloquée" && !note) return toast("Expliquez le blocage.");
+    if (st==="Terminée" && note.length < 5) return toast("Rédigez un court compte rendu avant de terminer la tâche.");
+    maj({statut:st, note, historique:ajoute(t.historique, trace(st, st, note))}, "Tâche mise à jour", ["Terminée","Bloquée"].includes(st) ? `${compte().nom} : tâche « ${t.titre} » ${st==="Terminée"?"terminée":"bloquée"}` : null);
+  });
+  $("#tAnn") && confirmBtn($("#tAnn"), "Confirmer l'annulation", () => maj({statut:"Annulée", historique:ajoute(t.historique, trace("Annulée","Annulée"))}, "Tâche annulée"));
+  $("#tRouv") && ($("#tRouv").onclick = () => maj({statut:"À faire", historique:ajoute(t.historique, trace("Rouverte","À faire"))}, "Tâche rouverte"));
+}
+
+/* ------------------------------- Réunions ------------------------------- */
+const gereReunion = r => pilote() || r.auteurEmail===S.email || (r.commission && mesComsResp().includes(r.commission));
+const peutConvoquer = () => pilote() || mesComsResp().length > 0;
+function vReunions(){
+  const f = S.ruf ||= {quand:"avenir"}, now = new Date().toISOString().slice(0,16);
+  let L = S.reunions.slice();
+  if (f.quand==="avenir") L = L.filter(r=>String(r.debut) >= now.slice(0,10)).sort((a,b)=>String(a.debut).localeCompare(String(b.debut)));
+  else L = L.filter(r=>f.quand==="passees" ? String(r.debut) < now.slice(0,10) : true).sort((a,b)=>String(b.debut).localeCompare(String(a.debut)));
+  const sansCR = S.reunions.filter(r=>String(r.debut) < now.slice(0,10) && r.statut!=="Annulée" && !r.compteRendu);
+  return `<div class="spread"><div><h2>Réunions</h2><p class="small muted">Convocation, feuille de présence, compte rendu et suites. Chaque réunion doit déboucher sur des décisions, des responsables et des échéances.</p></div>${peutConvoquer()?`<button class="btn primary" id="newR">${ICO.nouveau} Programmer</button>`:""}</div>
+  <div class="kpis">${kpi(S.reunions.filter(r=>String(r.debut)>=now.slice(0,10) && ["Programmée","Reportée"].includes(r.statut)).length,"à venir")}${kpi(sansCR.length,"sans compte rendu",sansCR.length?"warn":"g")}</div>
+  <div class="subtabs" role="group">${[["avenir","À venir"],["passees","Passées"],["toutes","Toutes"]].map(([k,l])=>`<button data-ruq="${k}" aria-pressed="${f.quand===k}">${l}</button>`).join("")}</div>
+  ${L.length?`<div class="clist">${L.map(r=>`<button class="citem ${r.statut==="Annulée"?"done":""}" data-reu="${esc(r.id)}"><span class="t">${esc(r.titre)}</span>
+    <span class="m"><span class="pill ${clsSt(r.statut)}">${esc(r.statut)}</span><span>${dtFR(r.debut)}</span><span>${esc(r.lieu||"Lieu à préciser")}</span><span>· ${esc(comCourt(r.commission))} · ${(r.convoques||[]).length} convoqué(s)${r.compteRendu?" · compte rendu ✓":""}</span></span></button>`).join("")}</div>`:`<div class="empty">Aucune réunion.</div>`}`;
+}
+function bindReunions(){
+  $("#newR") && ($("#newR").onclick = () => formReunion());
+  $("#main").querySelectorAll("[data-ruq]").forEach(b => b.onclick = () => { S.ruf.quand = b.dataset.ruq; render(); });
+  $("#main").querySelectorAll("[data-reu]").forEach(b => b.onclick = () => ficheReunion(b.dataset.reu));
+}
+function formReunion(r){
+  const isNew = !r; r = r || {};
+  const coms = pilote() ? COMMISSIONS.map(c=>c[0]) : mesComsResp();
+  const gens = actifsTous().filter(c=>c.em!==S.email);
+  openSheet(`<h2>${isNew?"Programmer une réunion":"Reporter ou modifier"}</h2>
+    <label class="f" for="r_t">Objet<input type="text" id="r_t" maxlength="150" value="${esc(r.titre||"")}"></label>
+    <div class="g2"><label class="f" for="r_d">Début<input type="datetime-local" id="r_d" value="${esc(r.debut||"")}"></label><label class="f" for="r_f">Fin<input type="datetime-local" id="r_f" value="${esc(r.fin||"")}"></label></div>
+    <label class="f" for="r_l">Lieu ou lien<input type="text" id="r_l" maxlength="300" value="${esc(r.lieu||"")}" placeholder="Salle, ou lien Google Meet"></label>
+    ${isNew?`<label class="f" for="r_c">Commission<select id="r_c">${pilote()?opts([["","Bureau (aucune commission)"], ...coms.map(c=>[c, comNom(c)])], ""):opts(coms.map(c=>[c, comNom(c)]), coms[0])}</select></label>
+    <label class="f" for="r_o">Ordre du jour<textarea id="r_o" maxlength="3000" placeholder="1. …&#10;2. …"></textarea></label>
+    <fieldset><legend>Convoquer</legend><div class="row">${COMMISSIONS.map(([c])=>`<button type="button" class="btn sm" data-rc="${c}">${esc(comCourt(c))}</button>`).join("")}<button type="button" class="btn sm" data-rc="*">Bureau</button></div>
+      <div class="checks">${gens.map(c=>`<label><input type="checkbox" name="rv" value="${esc(c.em)}"> ${esc(c.nom)} <span class="muted small">· ${esc((c.fonctions||[]).map(titreFonction).join(", ") || ROLES[c.role]?.l || "")}</span></label>`).join("")}</div></fieldset>`:""}
+    <div class="row"><button class="btn primary" id="r_ok">${isNew?"Programmer et convoquer":"Enregistrer et prévenir"}</button><button class="btn" data-close>Annuler</button></div>`);
+  $("#sheet").querySelectorAll("[data-rc]").forEach(b => b.onclick = () => {
+    const c = b.dataset.rc, cible = c==="*" ? actifsTous().filter(x=>(x.fonctions||[]).some(f=>FONCTIONS[f.code]?.bureau)).map(x=>x.em) : membresDe(c).map(x=>x.em);
+    $("#sheet").querySelectorAll('input[name="rv"]').forEach(i => { if (cible.includes(i.value)) i.checked = true; });
+  });
+  $("#r_ok").onclick = async () => {
+    const titre = $("#r_t").value.trim(), debut = $("#r_d").value, fin = $("#r_f").value, lieu = $("#r_l").value.trim();
+    if (!titre || !debut) return toast("L'objet et la date de début sont obligatoires.");
+    if (fin && fin <= debut) return toast("La fin doit être après le début.");
+    if (!isNew){
+      if (await write(()=>S.db.doc("reunions/"+r.id).update({titre, debut, fin, lieu, statut:"Programmée", historique:ajoute(r.historique, trace("Report / modification","Programmée", `${dtFR(debut)} · ${lieu}`))}), "Réunion mise à jour")){
+        audit("modification","reunion",r.id,{debut, lieu}); notifier(r.convoques, `Réunion modifiée : ${titre} — ${dtFR(debut)}${lieu?" · "+lieu:""}`, "reunion"); closeSheet();
+      }
+      return;
+    }
+    const conv = [...new Set([S.email, ...[...$("#sheet").querySelectorAll('input[name="rv"]:checked')].map(i=>i.value)])];
+    if (conv.length < 2) return toast("Convoquez au moins une personne.");
+    const commission = $("#r_c").value || null;
+    if (!pilote() && !commission) return toast("Choisissez votre commission.");
+    const id = gid("R"), data = {titre, debut, fin:fin||"", lieu, commission, ordre:$("#r_o").value.trim(), convoques:conv, noms:Object.fromEntries(conv.map(e=>[ek(e), nomDe(e)])), presences:{}, statut:"Programmée", compteRendu:"", auteurEmail:S.email, auteurNom:compte().nom, creeLe:nowISO(), historique:[trace("Convocation","Programmée")]};
+    if (await write(()=>S.db.doc("reunions/"+id).set(data), "Réunion programmée, convocations envoyées")){
+      audit("creation","reunion",id,{titre, debut, convoques:conv.length}); notifier(conv, `Convocation : ${titre} — ${dtFR(debut)}${lieu?" · "+lieu:""}`, "reunion"); closeSheet();
+    }
+  };
+}
+function ficheReunion(id){
+  const r = S.reunions.find(x=>x.id===id); if (!r) return toast("Réunion introuvable.");
+  const g = gereReunion(r), suites = S.taches.filter(t=>t.reunion===id), decs = S.decisions.filter(d=>d.reunion===id);
+  const PRES = ["Convoqué","Présent","Absent","Excusé"];
+  openSheet(`<div class="spread"><h2>${esc(r.titre)}</h2><span class="pill ${clsSt(r.statut)}">${esc(r.statut)}</span></div>
+    <dl class="dl"><dt>Quand</dt><dd>${dtFR(r.debut)}${r.fin?" → "+dtFR(r.fin):""}</dd><dt>Où</dt><dd>${esc(r.lieu||"À préciser")}</dd><dt>Commission</dt><dd>${esc(comNom(r.commission))}</dd><dt>Convoquée par</dt><dd>${esc(r.auteurNom)}</dd></dl>
+    ${r.ordre?`<h3>Ordre du jour</h3><div class="quote">${esc(r.ordre)}</div>`:""}
+    <h3>Présences</h3>
+    ${(r.convoques||[]).map(em=>{ const st = r.presences?.[ek(em)] || "Convoqué"; return `<div class="prow"><span>${esc(r.noms?.[ek(em)] || nomDe(em))}</span>${g?`<select data-pr="${esc(ek(em))}">${opts(PRES, st)}</select>`:`<span class="pill ${clsSt(st)}">${esc(st)}</span>`}</div>`; }).join("")}
+    ${g?`<button class="btn" id="rPres">Enregistrer les présences</button>`:""}
+    <h3>Compte rendu</h3>
+    ${g?`<textarea id="r_cr" maxlength="10000" placeholder="Points discutés, décisions prises, responsables et échéances.">${esc(r.compteRendu||"")}</textarea><button class="btn primary" id="rCR">Enregistrer le compte rendu</button>`:r.compteRendu?`<div class="quote">${esc(r.compteRendu)}</div>`:'<p class="small muted">Pas encore de compte rendu.</p>'}
+    ${r.crLe?`<p class="small muted">Rédigé par ${esc(r.crPar)} le ${dtFR(r.crLe)}</p>`:""}
+    <h3>Suites</h3>
+    ${decs.map(d=>`<div class="prow"><span><b>${esc(d.ref)}</b> ${esc(d.titre)}</span><span class="pill ${clsSt(d.statut)}">${esc(d.statut)}</span></div>`).join("")}
+    ${suites.map(t=>`<div class="prow"><span>${esc(t.titre)} <span class="small muted">→ ${esc(t.destNom||comCourt(t.commission))} · ${dFR(t.echeance)}</span></span><span class="pill ${clsSt(t.statut)}">${esc(t.statut)}</span></div>`).join("") || (decs.length?"":'<p class="small muted">Aucune suite enregistrée.</p>')}
+    <div class="row">${g && peutCreerTache()?`<button class="btn" id="rTache">+ Tâche issue de la réunion</button>`:""}${presidence()?`<button class="btn" id="rDec">+ Décision issue de la réunion</button>`:""}${g && r.statut!=="Annulée"?`<button class="btn" id="rMod">Reporter / modifier</button><button class="btn danger" id="rAnn">Annuler</button>`:""}<button class="btn ghost" data-close>Fermer</button></div>`);
+  const maj = async (data, msg, txt) => { if (await write(()=>S.db.doc("reunions/"+id).update(data), msg)){ audit(msg, "reunion", id, null); if (txt) notifier(r.convoques, txt, "reunion"); closeSheet(); } };
+  $("#rPres") && ($("#rPres").onclick = () => {
+    const pres = {}; $("#sheet").querySelectorAll("[data-pr]").forEach(s => pres[s.dataset.pr] = s.value);
+    maj({presences:pres, statut:r.statut==="Programmée" && r.debut <= new Date().toISOString().slice(0,16) ? "Tenue" : r.statut, historique:ajoute(r.historique, trace("Présences enregistrées", r.statut))}, "Présences enregistrées");
+  });
+  $("#rCR") && ($("#rCR").onclick = () => { const cr = $("#r_cr").value.trim(); if (cr.length < 10) return toast("Le compte rendu est trop court."); maj({compteRendu:cr, crPar:compte().nom, crLe:nowISO(), statut:r.statut==="Programmée" ? "Tenue" : r.statut, historique:ajoute(r.historique, trace("Compte rendu", "Tenue"))}, "Compte rendu enregistré", `Compte rendu disponible : ${r.titre}`); });
+  $("#rTache") && ($("#rTache").onclick = () => { closeSheet(); setTimeout(()=>formTache({reunion:id, reunionTitre:r.titre, convoques:r.convoques}), 60); });
+  $("#rDec") && ($("#rDec").onclick = () => { closeSheet(); setTimeout(()=>formDecision(null, {reunion:id, reunionTitre:r.titre}), 60); });
+  $("#rMod") && ($("#rMod").onclick = () => { closeSheet(); setTimeout(()=>formReunion(r), 60); });
+  $("#rAnn") && confirmBtn($("#rAnn"), "Confirmer l'annulation", () => { const m = prompt("Motif de l'annulation :"); if (!m) return toast("Le motif est obligatoire."); maj({statut:"Annulée", historique:ajoute(r.historique, trace("Annulée","Annulée", m))}, "Réunion annulée", `Réunion annulée : ${r.titre} (${m})`); });
+}
+
+/* ---------------------------- Journal d'audit ---------------------------- */
+function vAudit(){
+  const f = S.auf ||= {objet:""};
+  const L = S.audit.filter(a=>!f.objet || a.objet===f.objet);
+  return `<div class="spread"><div><h2>Journal d'audit</h2><p class="small muted">Toutes les créations, modifications, validations et changements de droits, horodatés et attribués. Ce journal ne peut être ni modifié ni effacé.</p></div></div>
+  <div class="filters"><select id="auf">${opts([["","Tous les objets"],["compte","Comptes et fonctions"],["decision","Décisions"],["tache","Tâches"],["reunion","Réunions"]], f.objet)}</select><span></span></div>
+  <div class="tablewrap"><table><thead><tr><th>Date</th><th>Par</th><th>Action</th><th>Objet</th><th>Détail</th></tr></thead><tbody>
+  ${L.map(a=>`<tr><td class="small">${new Date(a.le).toLocaleString("fr-FR")}</td><td>${esc(a.parNom)}</td><td class="small">${esc(a.action)}</td><td class="small">${esc(a.objet)} ${esc(a.ref||"")}</td><td class="small" style="white-space:normal">${esc(a.details ? JSON.stringify(a.details).slice(0,200) : "")}</td></tr>`).join("") || `<tr><td colspan="5"><div class="empty">Aucune entrée.</div></td></tr>`}
+  </tbody></table></div><p class="small muted">Les 300 dernières entrées.</p>`;
+}
+function bindAudit(){ $("#auf") && ($("#auf").onchange = e => { S.auf.objet = e.target.value; render(); }); }
+
+/* --------------------- Bloc « Mon travail » de l'accueil --------------------- */
+function blocGouv(){
+  try {
+    const mesT = S.taches.filter(t=>executeur(t) && TACHE_OUV.includes(t.statut)).sort((a,b)=>String(a.echeance||"9").localeCompare(String(b.echeance||"9")));
+    const mesD = mesDecisions().filter(d=>!["Exécutée","Annulée"].includes(d.statut) && (d.exec?.[ek(S.email)]?.statut||"À démarrer")!=="Terminée");
+    const proch = S.reunions.filter(r=>String(r.debut) >= today() && ["Programmée","Reportée"].includes(r.statut)).sort((a,b)=>String(a.debut).localeCompare(String(b.debut))).slice(0,3);
+    const sup = gouvSup() ? `<div class="kpis">${kpi(S.decisions.filter(d=>DEC_OUVERTES.includes(d.statut)).length,"décisions en cours")}${kpi(S.decisions.filter(decRetard).length,"décisions en retard",S.decisions.some(decRetard)?"bad":"g")}${kpi(S.taches.filter(tRetard).length,"tâches en retard (équipe)",S.taches.some(tRetard)?"bad":"g")}${kpi(S.reunions.filter(r=>String(r.debut)<today() && r.statut!=="Annulée" && !r.compteRendu).length,"réunions sans compte rendu")}</div>` : "";
+    if (!mesT.length && !mesD.length && !proch.length && !sup) return "";
+    return `<div class="card"><div class="spread"><h3>Mon travail</h3><a class="small" href="#taches">Toutes les tâches</a></div>${sup}
+      ${mesD.map(d=>`<button class="citem ${decRetard(d)?"late":""}" data-dec="${esc(d.id)}"><span class="t">Décision ${esc(d.ref)} · ${esc(d.titre)}</span><span class="m"><span class="pill">${esc(d.exec?.[ek(S.email)]?.statut||"À démarrer")}</span><span>Échéance ${dFR(d.echeance)}</span></span></button>`).join("")}
+      ${mesT.slice(0,5).map(t=>`<button class="citem ${tRetard(t)?"late":""}" data-tache="${esc(t.id)}"><span class="t">${esc(t.titre)}</span><span class="m"><span class="pill ${clsSt(t.statut)}">${esc(t.statut)}</span><span>Échéance ${dFR(t.echeance)}</span></span></button>`).join("")}
+      ${proch.map(r=>`<button class="citem" data-reu="${esc(r.id)}"><span class="t">📅 ${esc(r.titre)}</span><span class="m"><span>${dtFR(r.debut)}</span><span>${esc(r.lieu||"")}</span></span></button>`).join("")}
+      ${!mesT.length && !mesD.length && !proch.length ? '<p class="small muted">Aucune tâche, décision ou réunion en attente pour vous.</p>' : ""}</div>`;
+  } catch(e){ console.error(e); return ""; }
+}
+function bindGouvCommun(){
+  $("#main").querySelectorAll("[data-dec]").forEach(b => b.onclick = () => ficheDecision(b.dataset.dec));
+  $("#main").querySelectorAll("[data-tache]").forEach(b => b.onclick = () => ficheTache(b.dataset.tache));
+  $("#main").querySelectorAll("[data-reu]").forEach(b => b.onclick = () => ficheReunion(b.dataset.reu));
+}
+
+/* ---- Abonnements : chacun ne lit que ce que les règles du serveur lui permettent ---- */
+function abonnerGouv(){
+  const db = S.db;
+  if (gouvSup()){
+    sub("decisions","decisions", s => { S.decisions = rows(s); });
+    sub("taches","taches", s => { S.taches = rows(s); });
+    sub("reunions","reunions", s => { S.reunions = rows(s); });
+    sub("audit","audit", s => { S.audit = rows(s); }, db.collection("audit").orderBy("le","desc").limit(300));
+    return;
+  }
+  const fusion = (cle, part) => s => { S["_"+cle] ||= {}; S["_"+cle][part] = rows(s); S[cle] = [...new Map(Object.values(S["_"+cle]).flat().map(x=>[x.id,x])).values()]; };
+  sub("decisions","decisions", s => { S.decisions = rows(s); }, db.collection("decisions").where("executants","array-contains",S.email));
+  sub("taches","taches", fusion("taches","dest"), db.collection("taches").where("dest","==",S.email));
+  sub("taches","taches", fusion("taches","auteur"), db.collection("taches").where("auteurEmail","==",S.email));
+  mesComs().forEach(c => sub("taches","taches", fusion("taches","c_"+c), db.collection("taches").where("commission","==",c)));
+  sub("reunions","reunions", fusion("reunions","conv"), db.collection("reunions").where("convoques","array-contains",S.email));
+}
+
 function sub(path, key, fn, q){
   const timer = setTimeout(()=>{ S.stale=true; queueRender(); }, 10000);
   (q || S.db.collection(path)).onSnapshot(snap => { if (!snap.metadata.fromCache) clearTimeout(timer); fn(snap); S.loaded[key]=true; queueRender(); },
@@ -2846,7 +3328,8 @@ function abonner(){
   S.evalP = moisCourant(); S.rp.mois = moisCourant(); S.rp.a = moisCourant()+"-01"; S.rp.b = today();
   const r = role(), db = S.db, has = (...l) => r==="president" || LECTURE_TOTALE.includes(r) || inclut(l, r);
   db.doc("parametres/general").onSnapshot(d => { S.params = d.exists ? d.data() : {}; S.loaded.params = true; queueRender(); }, () => { S.params = {}; S.loaded.params = true; queueRender(); });
-  if (has("formation","secretaire","tuteurs","accompagnement")) sub("users","comptes", s => { S.comptes = Object.fromEntries(s.docs.map(d=>[d.id,d.data()])); }); else S.comptes = {[S.email]: S.moi};
+  /* Annuaire de l'équipe (noms, fonctions) : lisible par tous les comptes actifs pour l'organigramme, les tâches et les réunions */
+  sub("users","comptes", s => { S.comptes = Object.fromEntries(s.docs.map(d=>[d.id,d.data()])); });
   if (has("encaissement","tresorerie","formation","pedagogie","tuteur","secretaire","tuteurs","accompagnement")) sub("etudiants","etudiants", s => { S.etudiants = rows(s); });
   if (has("encaissement","tresorerie","formation","pedagogie","accompagnement","tuteurs")) sub("prive","prive", s => { S.prive = Object.fromEntries(s.docs.map(d=>[d.id,d.data()])); });
   if (has("encaissement","tresorerie")){ sub("encaissements","encaissements", s => { S.encaissements = rows(s); }); }
@@ -2862,8 +3345,9 @@ function abonner(){
   else if (["formation","tuteurs","accompagnement"].includes(r)) sub("rapports_resp","rapportsResp", s => { S.rapportsResp = rows(s); }, db.collection("rapports_resp").where("auteurEmail","==",S.email));
   if (has("formation","secretaire","tuteurs")) sub("rapports_tuteurs","tut", s => { S.tut = rows(s); });
   else if (r==="tuteur") db.doc("rapports_tuteurs/"+S.uid).onSnapshot(d => { S.tut = d.exists ? [{id:d.id, ...d.data()}] : []; queueRender(); }, ()=>{});
-  const canaux = r==="president" ? ["president"] : [r, "u_"+S.uid];
-  canaux.forEach((c, i) => db.collection(`notifs/${c}/items`).orderBy("le","desc").limit(lectureTotale()?400:150).onSnapshot(s => { S[i?"jB":"jA"] = rows(s); fusionJournal(); queueRender(); }, ()=>{}));
+  const canaux = r==="president" ? ["president"] : [r, "u_"+S.uid, "e_"+S.email];
+  canaux.forEach((c, i) => db.collection(`notifs/${c}/items`).orderBy("le","desc").limit(lectureTotale()?400:150).onSnapshot(s => { S.jx[i] = rows(s); fusionJournal(); queueRender(); }, ()=>{}));
+  abonnerGouv();
   if (lectureTotale()){ sub("consignes","consignes", s => { S.consignes = rows(s); }); sub("evaluations","evaluations", s => { S.evaluations = rows(s); }); }
   else { sub("consignes","consignes", s => { S.consignes = rows(s); }, db.collection("consignes").where("dest","==",S.email)); sub("evaluations","evaluations", s => { S.evaluations = rows(s); }, db.collection("evaluations").where("email","==",S.email)); }
   sub("classement","classements", s => { S.classements = rows(s); });
@@ -2897,7 +3381,9 @@ function abonner(){
       S.loaded.moi = true;
       if (premier && S.moi && S.moi.actif !== false){ premier = false; S.db.doc("users/"+em).update({uid:u.uid, derniereConnexion:nowISO()}).catch(()=>{}); }
       if (avant && S.moi && S.moi.role !== avant) location.reload();
-      if (S.moi && S.moi.actif !== false){ if (!S.abonne) abonner(); else if (!["president","formation","secretaire","tuteurs","accompagnement",...LECTURE_TOTALE].includes(role())) S.comptes = {[S.email]: S.moi}; }
+      if (S.moi && S.moi.actif !== false && !S.abonne) abonner();
+      if (S.abonne && S.moi && S.moi.role !== "president" && JSON.stringify([S.moi.rolesSup||[], S.moi.commissions||[]]) !== S.signatureDroits && S.signatureDroits) location.reload();
+      if (S.moi) S.signatureDroits = JSON.stringify([S.moi.rolesSup||[], S.moi.commissions||[]]);
       queueRender();
     }, () => { S.loaded.moi = true; queueRender(); });
     render();
