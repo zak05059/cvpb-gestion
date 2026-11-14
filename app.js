@@ -342,19 +342,22 @@ function recalc(){
   if (lectureTotale()){ const ret = S.consignes.filter(k=>!["Faite","Annulée"].includes(k.statut) && k.echeance<today()); if (ret.length) S.C.alertes.push({niv:"warn", titre:`${ret.length} consigne(s) non exécutée(s) à l'échéance`, detail:[...new Set(ret.map(k=>k.destNom))].slice(0,4).join(", "), pour:["president"], lien:"#consignes"}); }
 }
 function render(){
+  rendu(); finRendu();
+}
+function rendu(){
   const main = $("#main");
   $("#bnav").hidden = true; if ($("#avatar")) $("#avatar").hidden = true;
   if (S.sansConfig){ $("#tabs").innerHTML=""; main.innerHTML = gate("Configuration à terminer", "Le fichier <b>firebase-config.js</b> contient encore les valeurs d'exemple. Remplacez-les par la configuration de votre projet Firebase (voir le guide LISEZ-MOI)."); return; }
-  if (!S.authPret){ main.innerHTML = `<div class="empty">Chargement de l'application…</div>`; return; }
+  if (!S.authPret){ main.innerHTML = skel(); return; }
   if (!S.uid){ $("#tabs").innerHTML=""; $("#who").innerHTML=""; $("#bell").hidden = true; if ($("#search")) $("#search").hidden = true; espace(false); renderLogin(main); return; }
   $("#bell").hidden = false; if ($("#search")) $("#search").hidden = false;
-  if (!S.loaded.moi){ main.innerHTML = `<div class="empty">Ouverture de votre espace…</div>`; return; }
+  if (!S.loaded.moi){ main.innerHTML = skel(); return; }
   const c = compte();
   if (!c){ $("#tabs").innerHTML=""; main.innerHTML = gate("Accès non autorisé", `Le compte <b>${esc(S.email)}</b> n'a pas encore été ajouté à l'application. Demandez au président de la CVPB de vous ajouter avec cette adresse.`, btnDeco()); bindDeco(); return; }
   if (c.actif === false){ $("#tabs").innerHTML=""; main.innerHTML = gate("Accès suspendu", "Votre accès a été suspendu par la Présidence. Contactez le président pour le rétablir.", btnDeco()); bindDeco(); return; }
   $("#who").innerHTML = `<b>${esc(c.nom)}</b>${esc(ROLES[c.role]?.l||"")}`;
   espace(c.role==="tuteur");
-  if (!S.loaded.params){ main.innerHTML = `<div class="empty">${S.stale?"Les données ne répondent pas encore. Vérifiez votre connexion.":"Chargement des données de la CVPB…"}</div>`; return; }
+  if (!S.loaded.params){ main.innerHTML = S.stale ? `<div class="empty">Les données ne répondent pas encore. Vérifiez votre connexion.</div>` : skel(); return; }
   recalc();
   if (c.role==="tuteur"){ renderTuteur(main); majBadge(); return; }
   const v = view();
@@ -363,7 +366,7 @@ function render(){
   navigation(VIEWS.filter(x=>x.ok()).map(x=>({id:x.id, l:x.id==="consignes"&&!lectureTotale()?"Mes consignes":lab(x), n:nb(x)})), v, principauxDe(c.role));
   majBadge();
   if (v==="depots") S.sub.caisse = "depots";
-  main.innerHTML = (v==="accueil" ? blocConsignes() : "") + ({suivi:vSuivi, synthese:vSynthese, catalogue:vCatalogue, messages:vMessages, consignes:vConsignes, rapports:vRapports, evaluations:vEvaluations, classement:vClassement, accueil:vAccueil, etudiants:vEtudiants, registre:vRegistre, cotisations:vCotisations, caisse:vCaisse, depots:vCaisse, pedagogie:vPedagogie, tutorat:vTutorat, notifications:vNotifs, admin:vAdmin, compte:vCompte}[v])();
+  main.innerHTML = (v==="accueil" ? heroAccueil() + anneaux() + blocConsignes() : "") + ({suivi:vSuivi, synthese:vSynthese, catalogue:vCatalogue, messages:vMessages, consignes:vConsignes, rapports:vRapports, evaluations:vEvaluations, classement:vClassement, accueil:vAccueil, etudiants:vEtudiants, registre:vRegistre, cotisations:vCotisations, caisse:vCaisse, depots:vCaisse, pedagogie:vPedagogie, tutorat:vTutorat, notifications:vNotifs, admin:vAdmin, compte:vCompte}[v])();
   bind(v==="depots" ? "caisse" : v);
   if (v==="compte") bindCompte();
   if (v==="notifications") marquerLu();
@@ -388,10 +391,10 @@ function bindDeco(){ $("#deco") && ($("#deco").onclick = () => S.fb.compte.decon
 const MSG_AUTH = c => ({"auth/popup-closed-by-user":"Connexion annulée.","auth/network-request-failed":"Pas de connexion internet. La connexion nécessite le réseau.","auth/unauthorized-domain":"Cette adresse n'est pas autorisée dans Firebase (Authentication > Paramètres > Domaines autorisés).","auth/operation-not-allowed":"La connexion Google n'est pas activée dans Firebase (Authentication > Sign-in method > Google).","auth/too-many-requests":"Trop de tentatives. Patientez quelques minutes.","auth/user-disabled":"Ce compte Google a été désactivé."}[c] || "Connexion impossible pour l'instant. Réessayez.");
 const G_ICONE = '<svg width="20" height="20" viewBox="0 0 48 48" aria-hidden="true"><path fill="#FFC107" d="M43.6 20.5H42V20H24v8h11.3C33.7 32.7 29.2 36 24 36c-6.6 0-12-5.4-12-12s5.4-12 12-12c3.1 0 5.8 1.2 7.9 3.1l5.7-5.7C34 6.1 29.3 4 24 4 12.9 4 4 12.9 4 24s8.9 20 20 20 20-8.9 20-20c0-1.3-.1-2.4-.4-3.5z"/><path fill="#FF3D00" d="M6.3 14.7l6.6 4.8C14.7 15.1 19 12 24 12c3.1 0 5.8 1.2 7.9 3.1l5.7-5.7C34 6.1 29.3 4 24 4 16.3 4 9.7 8.3 6.3 14.7z"/><path fill="#4CAF50" d="M24 44c5.2 0 9.9-2 13.4-5.2l-6.2-5.2C29.2 35.1 26.7 36 24 36c-5.2 0-9.6-3.3-11.3-7.9l-6.5 5C9.5 39.6 16.2 44 24 44z"/><path fill="#1976D2" d="M43.6 20.5H42V20H24v8h11.3c-.8 2.2-2.2 4.2-4.1 5.6l6.2 5.2C37 39.2 44 34 44 24c0-1.3-.1-2.4-.4-3.5z"/></svg>';
 function renderLogin(main){
-  main.innerHTML = `<div class="gate"><img src="icon-512.png" alt="Logo de la Communauté Virtuelle de Port-Bouët"><h2>Connexion</h2>
-    <p class="muted">Communauté Virtuelle de Port-Bouët · CVPB Académie</p>
-    <div class="form card" style="width:100%;text-align:left">
-      <button class="btn" id="gLogin" type="button" style="justify-content:center;min-height:48px;font-weight:600;gap:10px">${G_ICONE} Se connecter avec Google UVCI</button>
+  main.innerHTML = `<div class="login"><img class="lg" src="icon-512.png" alt="Logo de la Communauté Virtuelle de Port-Bouët">
+    <div><h2>Bienvenue</h2><p class="muted">CVPB Manager · Communauté Virtuelle de Port-Bouët · CVPB Académie</p></div>
+    <div class="form card">
+      <button class="btn gbtn" id="gLogin" type="button">${G_ICONE} Se connecter avec Google UVCI</button>
       <p class="small muted">Utilisez votre adresse <b>@${esc(DOMAINE())}</b>. Les autres comptes Google sont refusés.</p>
       <p class="small" id="l_err" style="color:var(--bad)" role="alert">${esc(S.erreurConnexion||"")}</p>
       <p class="small muted">Pas encore d'accès ? Demandez au président de la CVPB de vous ajouter avec votre adresse UVCI.</p>
@@ -426,10 +429,12 @@ function vCompte(){
     <h3>Notifications du téléphone</h3>
     ${perm==="granted"?'<p class="small">Activées : vous serez prévenu des nouvelles actions qui vous concernent.</p>':perm==="denied"?'<p class="small">Bloquées dans les réglages du navigateur. Autorisez les notifications pour ce site pour les recevoir.</p>':perm==="indisponible"?'<p class="small muted">Non disponibles sur cet appareil.</p>':'<button class="btn" id="notifOn" type="button">Activer les notifications</button>'}
     <p class="small muted">Elles arrivent quand l'application est ouverte ou en arrière-plan. Ouvrez-la au moins une fois par jour pour rester à jour.</p></div>
+  <div class="card"><h3>Apparence</h3><div class="subtabs" role="group" aria-label="Thème">${[["dark","Sombre"],["light","Clair"],["auto","Automatique"]].map(([k,l])=>`<button data-theme-set="${k}" aria-pressed="${(localStorage.getItem("cvpb-theme")||"dark")===k}">${l}</button>`).join("")}</div></div>
   <div class="card"><h3>Session</h3><p class="small muted">Vous restez connecté sur cet appareil. Déconnectez-vous si le téléphone est partagé.</p><div class="row">${btnDeco()}</div></div>`;
 }
 function bindCompte(){
   bindInstall(); bindDeco();
+  document.querySelectorAll("[data-theme-set]").forEach(b => b.onclick = () => { try { localStorage.setItem("cvpb-theme", b.dataset.themeSet); } catch(e){} appliquerTheme(); render(); });
   $("#notifOn") && ($("#notifOn").onclick = async () => { try { await Notification.requestPermission(); } catch(e){} render(); });
 }
 
@@ -1455,8 +1460,11 @@ function navigation(items, courant, principaux){
   const bn = $("#bnav"); bn.hidden = false;
   const pr = principaux.map(id=>items.find(x=>x.id===id)).filter(Boolean).slice(0,4);
   const court = l => ({"Tableau de bord":"Accueil","Tableau général":"Accueil","Mon espace":"Accueil","Mon tableau de bord":"Accueil","Alertes et notifications":"Alertes","Notifications":"Alertes","Registre des encaissements":"Registre","Suivi des cotisations":"Cotisations","Suivi pédagogique":"Pédagogie","Rapports des tuteurs":"Tutorat","Mes consignes":"Consignes","Nouveau rapport":"Rapport","Mes rapports":"Rapports","Mes dépôts à la caisse":"Dépôts","WhatsApp étudiants":"WhatsApp","Suivi des étudiants":"Suivi","Synthèses et rapports":"Synthèses","Catalogue des formations":"Catalogue","Rapport de la semaine":"Rapport","Mes étudiants":"Étudiants"}[l] || l);
-  bn.innerHTML = pr.map(x=>`<a href="#${x.id}" ${x.id===courant?'aria-current="page"':""}>${icoDe(x.id)}<span>${esc(court(x.l))}</span>${x.n?`<b class="nb">${x.n>99?"99+":x.n}</b>`:""}</a>`).join("")
-    + `<button type="button" id="bMenu" ${pr.some(x=>x.id===courant)?"":'aria-current="page"'}>${ICO.menu}<span>Menu</span></button>`;
+  const lien = x => `<a href="#${x.id}" ${x.id===courant?'aria-current="page"':""}>${icoDe(x.id)}<span>${esc(court(x.l))}</span>${x.n?`<b class="nb">${x.n>99?"99+":x.n}</b>`:""}</a>`;
+  const p3 = pr.slice(0,3);
+  bn.innerHTML = p3.slice(0,2).map(lien).join("") + `<button type="button" class="fab" id="bFab" aria-label="Actions rapides">${ICO.nouveau}</button>` + (p3[2] ? lien(p3[2]) : "<span></span>")
+    + `<button type="button" id="bMenu" ${p3.some(x=>x.id===courant)?"":'aria-current="page"'}>${ICO.menu}<span>Menu</span></button>`;
+  $("#bFab").onclick = actionsRapides;
   $("#bMenu").onclick = () => {
     openSheet(`<div class="spread"><h2>Menu</h2><button class="btn ghost" data-close>Fermer</button></div>
       <div class="menu">${items.map(x=>`<a href="#${x.id}" ${x.id===courant?'aria-current="page"':""}>${icoDe(x.id)}<span>${esc(x.l)}${x.n?` (${x.n})`:""}</span></a>`).join("")}</div>`);
@@ -2643,7 +2651,7 @@ function vTuteurAccueil(){
   const c = compte(), mes = S.rapportsHebdo.filter(r=>r.tuteurEmail===S.email), cur = lundiDe(today()), due = derniereSemaineDue();
   const rCur = rhDe(S.email, cur), rDue = due && rhDe(S.email, due);
   const etat = (r, s) => r ? pillRH(r.statut) : (s && echeanceSem(s) < today() ? '<span class="pill bad">Non soumis · en retard</span>' : '<span class="pill warn">À rédiger</span>');
-  return `<div class="spread"><div><h2>Bonjour ${esc(c.nom)}</h2><p class="small muted">Tuteur · ${esc(codeSp(c.specialite)||"")} ${esc(c.niveau||"")} · ${mesEtudiantsTuteur().length} étudiant(s)</p></div><a class="btn vert" href="#t-hebdo">${ICO.nouveau} Rapport de la semaine</a></div>
+  return `${heroAccueil(`Tuteur · ${codeSp(c.specialite)||""} ${c.niveau||""} · ${mesEtudiantsTuteur().length} étudiant(s)`)}${anneaux()}<div class="row"><a class="btn vert" href="#t-hebdo">${ICO.nouveau} Rapport de la semaine</a></div>
   ${blocConsignes()}
   <div class="card"><h3>Mes rapports hebdomadaires (obligatoires)</h3><div class="plist">
     ${due && due!==cur?`<div class="prow"><span>${esc(semLib(due))}<br><span class="small muted">échéance ${dFR(echeanceSem(due))}</span></span>${rDue&&rDue.statut!=="Brouillon"?`<button class="btn sm ghost" data-rh="${esc(rDue.id)}">${pillRH(rDue.statut)}</button>`:etat(rDue&&rDue.statut!=="Brouillon"?rDue:null, due)}</div>`:""}
@@ -2666,6 +2674,93 @@ function abonnerFormateur(){
   const N = {};
   codes.forEach(c => S.formSubs.push(S.db.doc("notes/"+c).onSnapshot(d => { if (d.exists) N[c] = {id:c, ...d.data()}; else delete N[c]; S.notes = Object.values(N); queueRender(); }, ()=>{})));
 }
+
+
+/* ======== Design : thème, accueil, anneaux, actions rapides, animations ======== */
+function appliquerTheme(){
+  let t = "dark"; try { t = localStorage.getItem("cvpb-theme") || "dark"; } catch(e){}
+  if (t==="auto") t = matchMedia("(prefers-color-scheme: light)").matches ? "light" : "dark";
+  document.documentElement.dataset.theme = t;
+  const m = document.querySelector('meta[name=theme-color]'); if (m) m.content = t==="light" ? "#f5f2f7" : "#0e0812";
+}
+const skel = () => `<div class="skel" aria-label="Chargement" role="status"><i></i><i></i><i></i></div>`;
+function heroAccueil(sousTitre){
+  const c = compte(), h = new Date().getHours(), salut = h < 12 ? "Bonjour" : h < 18 ? "Bon après-midi" : "Bonsoir";
+  const prenom = String(c?.nom||"").trim().split(/\s+/)[0] || "";
+  const date = new Date().toLocaleDateString("fr-FR",{weekday:"long",day:"numeric",month:"long"});
+  return `<section class="hero"><img class="wm" src="icon-512.png" alt=""><div><p>${esc(date.charAt(0).toUpperCase()+date.slice(1))}</p><h2>${salut}, ${esc(prenom)} 👋</h2><p>${esc(sousTitre || ROLES[role()]?.l || "")}</p></div>
+    <button class="srch" type="button" data-rech><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>Rechercher un étudiant, une formation, un rapport…</button></section>`;
+}
+function ringHTML(frac, centre, label, violet){
+  const r = 34, C = 2*Math.PI*r, f = frac==null || isNaN(frac) ? 0 : Math.max(0, Math.min(1, frac));
+  return `<div class="ring ${violet?"v":""}"><div class="c"><svg viewBox="0 0 84 84" aria-hidden="true"><circle class="tr" cx="42" cy="42" r="${r}" fill="none" stroke-width="8"/><circle class="pr" cx="42" cy="42" r="${r}" fill="none" stroke-width="8" stroke-dasharray="${C.toFixed(1)}" stroke-dashoffset="${(C*(1-f)).toFixed(1)}" style="--off:${(C*(1-f)).toFixed(1)};--C:${C.toFixed(1)}"/></svg><b>${esc(centre)}</b></div><span class="l">${esc(label)}</span></div>`;
+}
+const ratio = (a, b) => b ? a/b : null;
+function anneaux(){
+  try {
+    const r = role(), C = S.C, rr = [];
+    const actifs = S.etudiants.filter(s=>s.statut!=="Inactif");
+    const assid = (() => { const L = actifs.filter(s=>C.peda[s.matricule]?.assiduite!=null); return L.length ? L.reduce((a,s)=>a+C.peda[s.matricule].assiduite,0)/L.length : null; })();
+    const consMois = S.consignes.filter(c=>c.statut!=="Annulée" && dansMois(c.echeance, moisCourant()) && (c.statut==="Faite" || c.echeance < today()));
+    const consOk = consMois.filter(c=>c.statut==="Faite" && (c.faitLe||"").slice(0,10)<=c.echeance).length;
+    const E = etatSuivi(), X = etatAccomp();
+    const add = (num, den, label, violet) => rr.push(ringHTML(ratio(num, den), den ? `${num}/${den}` : "—", label, violet));
+    const addP = (f, label, violet) => rr.push(ringHTML(f, f==null ? "—" : Math.round(f*100)+" %", label, violet));
+    if (["president","vicepresident"].includes(r)){ add(E.soumis, E.attendus, "rapports des tuteurs"); add(consOk, consMois.length, "consignes à temps (mois)", true); add(actifs.filter(s=>["À jour","Mois en cours"].includes(C.etu[s.matricule]?.situation)).length, actifs.length, "étudiants à jour"); }
+    else if (r==="secretaire"){ add(E.soumis, E.attendus, "rapports soumis"); add(S.rapportsHebdo.filter(x=>x.statut==="Contrôlé").length, S.rapportsHebdo.filter(x=>["Validé","Exploité","Contrôlé"].includes(x.statut)).length, "rapports contrôlés", true); add(X.D.filter(d=>["Résolu","Clos"].includes(d.statut)).length, X.D.length, "suivis résolus"); }
+    else if (r==="tuteurs"){ add(E.soumis, E.attendus, "rapports soumis"); add(E.valides, E.soumis, "rapports validés", true); add(E.affectes, actifs.filter(s=>s.academie).length, "étudiants affectés"); }
+    else if (r==="accompagnement"){ add(X.terminees, X.engagees, "actions terminées"); add(X.D.filter(d=>["Résolu","Clos"].includes(d.statut)).length, X.D.length, "suivis résolus", true); add(S.rapportsHebdo.filter(x=>["Exploité","Contrôlé"].includes(x.statut)).length, S.rapportsHebdo.filter(x=>["Validé","Exploité","Contrôlé"].includes(x.statut)).length, "rapports exploités"); }
+    else if (["encaissement","caisse","tresorerie"].includes(r)){ add(actifs.filter(s=>C.etu[s.matricule]?.inscOk).length, actifs.length, "inscriptions soldées"); add(actifs.filter(s=>["À jour","Mois en cours"].includes(C.etu[s.matricule]?.situation)).length, actifs.length, "étudiants à jour", true); add(S.depots.filter(d=>d.statut==="Validé").length, S.depots.filter(d=>d.statut!=="Annulé").length, "dépôts validés"); }
+    else if (r==="formation"){ add(S.seances.filter(x=>x.validation?.statut==="Validée").length, S.seances.length, "séances validées"); addP(assid, "assiduité moyenne", true); const act = S.formations.filter(f=>["Ouverte","En cours"].includes(f.statut)); add(act.filter(f=>(f.formateurs||[]).length).length, act.length, "formations avec formateur"); }
+    else if (r==="pedagogie"){ const mes = S.seances; add(mes.filter(x=>x.validation?.statut==="Validée").length, mes.length, "séances validées"); addP(assid, "assiduité moyenne", true); add(S.formations.filter(f=>["Ouverte","En cours"].includes(f.statut)).length, S.formations.length, "formations actives"); }
+    else if (r==="tuteur"){ const mes = S.rapportsHebdo.filter(x=>x.tuteurEmail===S.email && x.statut!=="Brouillon"), dues = semainesDues(); add(dues.filter(s=>mes.some(x=>x.semaine===s)).length, dues.length, "semaines rendues"); add(mes.filter(x=>["Validé","Exploité","Contrôlé"].includes(x.statut)).length, mes.length, "rapports validés", true); const pres = mes.reduce((a,x)=>{ const n = Number(x.nbSeances)||0; Object.values(x.presences||{}).forEach(v=>{ a.p+=Number(v)||0; a.t+=n; }); return a; },{p:0,t:0}); addP(ratio(pres.p, pres.t), "présence de mes étudiants"); }
+    return rr.length ? `<div class="rings">${rr.join("")}</div>` : "";
+  } catch(e){ console.error(e); return ""; }
+}
+function actionsRapides(){
+  const r = role(), go = h => () => { closeSheet(); location.hash = h; };
+  const A = [
+    can("enc.saisir") && ["Nouvel encaissement", ICO.registre, () => formEnc()],
+    can("etu.gerer") && ["Nouvel étudiant", ICO.etudiants, () => formEtu()],
+    can("depot.declarer") && ["Déclarer un dépôt", ICO.depots, () => formDepot()],
+    can("op.saisir") && ["Entrée ou sortie de caisse", ICO.caisse, () => formOp()],
+    can("peda.saisir") && ["Pointer une séance", ICO.pedagogie, () => formSeance()],
+    r==="formation" && ["Nouvelle formation", ICO.catalogue, () => formFormation()],
+    presidence() && ["Donner une consigne", ICO.consignes, () => formConsigne()],
+    r==="tuteur" && ["Rapport de la semaine", ICO.hebdo, go("t-hebdo")],
+    r==="tuteurs" && ["Rapports à valider", ICO.suivi, go("suivi")],
+    ["accompagnement","tuteurs","formation"].includes(r) && ["Ouvrir un suivi", ICO.suivi, () => formDossier(r==="accompagnement" ? {} : {priorite:"Haute"})],
+    r==="secretaire" && ["Préparer la synthèse", ICO.synthese, () => formSynthese()],
+    ["formation","tuteurs","accompagnement"].includes(r) && ["Transmettre un rapport", ICO.synthese, () => formRapportResp()],
+    domainesMsg().length && !LECTURE_TOTALE.includes(r) && ["Message WhatsApp", ICO.messages, () => formMessage("")],
+    ["Rechercher", `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>`, () => rechercheGlobale()]
+  ].filter(Boolean);
+  openSheet(`<div class="spread"><h2>Actions rapides</h2><button class="btn ghost" data-close>Fermer</button></div><div class="actions">${A.map((a,i)=>`<button type="button" data-ar="${i}">${a[1]}<span>${esc(a[0])}</span></button>`).join("")}</div>`);
+  $("#sheet").querySelectorAll("[data-ar]").forEach(b => b.onclick = () => { const f = A[Number(b.dataset.ar)][2]; closeSheet(); setTimeout(f, 60); });
+}
+/* Après chaque rendu : animations à l'arrivée sur une page seulement (pas à chaque mise à jour en direct) */
+function finRendu(){
+  const sp = $("#splash"); if (sp && S.authPret && !sp.classList.contains("out") && (!S.uid || S.loaded.params || S.loaded.moi && !compte())){ sp.classList.add("out"); setTimeout(()=>sp.remove(), 600); }
+  const main = $("#main"), cle = location.hash + "|" + (S.uid||"") + "|" + (S.loaded.params?1:0);
+  main.querySelectorAll("[data-rech]").forEach(b => b.onclick = rechercheGlobale);
+  if (cle === S.derniereVue) return;
+  S.derniereVue = cle;
+  if (matchMedia("(prefers-reduced-motion: reduce)").matches) return;
+  [...main.children].forEach((c,i)=>c.style.setProperty("--i", Math.min(i, 10)));
+  main.querySelectorAll(".kpis,.rings,.clist").forEach(g => [...g.children].forEach((c,j)=>c.style.setProperty("--j", Math.min(j, 8))));
+  main.classList.remove("anim"); void main.offsetWidth; main.classList.add("anim");
+  clearTimeout(finRendu.t); finRendu.t = setTimeout(()=>main.classList.remove("anim"), 1400);
+  /* anneaux : tracé progressif ; chiffres clés : comptage */
+  main.querySelectorAll(".ring .pr").forEach(c => { const off = c.getAttribute("stroke-dashoffset"); c.style.transition = "none"; c.setAttribute("stroke-dashoffset", c.getAttribute("stroke-dasharray")); requestAnimationFrame(()=>requestAnimationFrame(()=>{ c.style.transition = ""; c.setAttribute("stroke-dashoffset", off); })); });
+  main.querySelectorAll(".kpi .v").forEach(el => {
+    const t = el.textContent.trim(), m = t.match(/^(-?)([\d\s  ]+)(\s?%)?$/); if (!m) return;
+    const fin = Number(m[2].replace(/\D/g,"")); if (!(fin > 0) || fin > 10000000) return;
+    const t0 = performance.now(), d = 700, fmt = n => m[1] + Math.round(n).toLocaleString("fr-FR").replace(/[  ]/g," ") + (m[3]||"");
+    const pas = now => { const k = Math.min(1, (now - t0)/d), e = 1 - Math.pow(1-k, 3); el.textContent = fmt(fin*e); if (k < 1) requestAnimationFrame(pas); else el.textContent = t; };
+    requestAnimationFrame(pas);
+  });
+}
+setTimeout(() => { const sp = $("#splash"); if (sp){ sp.classList.add("out"); setTimeout(()=>sp.remove(), 600); } }, 6000);
 
 /* ======== Données en direct ======== */
 function sub(path, key, fn, q){
