@@ -115,12 +115,15 @@ function calculer(D, ref){
     for (const m of mois){ const p = Math.min(P.mensualite, Math.max(0,reste)); reste -= p; parMois[m.code] = p; }
     const avance = Math.max(0, reste);
     const concerne = s.statut !== "Inactif";
-    const dueEchus = concerne ? echus.length * P.mensualite : 0;
+    /* Exonération décidée par la Présidence (membres de l'équipe apprenants) : mensualités, ou mensualités et inscription */
+    const exoM = ["mensualites","tout"].includes(s.exonere), exoI = s.exonere==="tout";
+    const dueEchus = concerne && !exoM ? echus.length * P.mensualite : 0;
     const arriere = Math.max(0, dueEchus - pool);
-    const resteCourant = concerne && courant ? Math.max(0, P.mensualite - (parMois[courant.code]||0)) : 0;
-    const inscOk = inscPayee >= P.inscription;
+    const resteCourant = concerne && !exoM && courant ? Math.max(0, P.mensualite - (parMois[courant.code]||0)) : 0;
+    const inscOk = exoI || inscPayee >= P.inscription;
     let situation, niv;
     if (!concerne){ situation = "Inactif"; niv = "mute"; }
+    else if (exoM && inscOk){ situation = "Exonéré"; niv = "ok"; }
     else if (inscPayee === 0 && !L.length){ situation = "Aucun paiement"; niv = "bad"; }
     else if (!inscOk){ situation = "Inscription incomplète"; niv = "warn"; }
     else if (arriere > 0){ situation = "En retard"; niv = "bad"; }
@@ -131,7 +134,7 @@ function calculer(D, ref){
     const prochain = prochainM ? {code:prochainM.code, libelle:prochainM.libelle, paye:parMois[prochainM.code]||0, reste:P.mensualite-(parMois[prochainM.code]||0)} : null;
     const nbTranches = L.filter(e=>e.nature===N_COTI && e.montant < P.mensualite).length;
     const enEchelonnement = mois.some(m => { const v = parMois[m.code]||0; return v>0 && v<P.mensualite; }) || (inscPayee>0 && !inscOk);
-    etu[s.matricule] = {prochain, nbTranches, enEchelonnement, inscPayee, inscOk, tshirtVendu, imputation, cotiDirect, pool, parMois, avance, dueEchus, arriere, resteCourant, situation, niv, totalVerse: L.reduce((a,e)=>a+e.montant,0), versements: L};
+    etu[s.matricule] = {exoM, exoI, prochain, nbTranches, enEchelonnement, inscPayee, inscOk, tshirtVendu, imputation, cotiDirect, pool, parMois, avance, dueEchus, arriere, resteCourant, situation, niv, totalVerse: L.reduce((a,e)=>a+e.montant,0), versements: L};
   }
 
   /* --- Totaux registre --- */
@@ -572,7 +575,7 @@ function vGeneral(){
   <h3>Finances</h3>
   <div class="kpis">${kpi(F(C.totalEncaisse),"FCFA encaissés (registre)")}${kpi(F(K.solde),`FCFA en caisse${K.engage?` · ${F(K.engage)} engagés`:""}`, "g "+(K.solde<P().seuils.soldeMin?"bad":""))}${kpi(F(K.nonRemis),"FCFA encaissés non remis à la caisse", K.nonRemis<0?"warn":"")}${kpi(F(arr),"FCFA d'arriérés de cotisation", arr?"bad":"g")}</div>
   <h3>Étudiants et CVPB Académie</h3>
-  <div class="kpis">${kpi(actifs.length,"étudiants actifs")}${kpi(`${n("À jour")+n("Mois en cours")} / ${actifs.length}`,"inscription soldée et sans arriéré","g")}${kpi(pct(assid),"assiduité moyenne aux formations")}${kpi(S.seances.length,"séances de formation pointées","g")}</div>
+  <div class="kpis">${kpi(actifs.length,"étudiants actifs")}${kpi(`${n("À jour")+n("Mois en cours")+n("Exonéré")} / ${actifs.length}`,"inscription soldée et sans arriéré","g")}${kpi(pct(assid),"assiduité moyenne aux formations")}${kpi(S.seances.length,"séances de formation pointées","g")}</div>
   <h3>Tutorat</h3>
   <div class="kpis">${kpi(T.recents.length,"rapports de tutorat sur 30 jours")}${kpi(pct(T.tauxRecents),"présence aux séances de tutorat (30 j)","g")}${kpi(`${tutActifs} / ${tuteurs.length}`,"tuteurs ayant rendu un rapport depuis moins de 10 jours", tuteurs.length&&tutActifs<tuteurs.length?"warn":"")}${kpi(T.aTraiter.length,"interventions demandées non traitées", T.aTraiter.length?"bad":"g")}</div>
   <div class="cols">
@@ -691,7 +694,7 @@ function vEtudiants(){
     <input type="search" id="fq" placeholder="Rechercher un nom ou un matricule" value="${esc(f.q)}" aria-label="Recherche">
     <select id="fniv" aria-label="Niveau">${opts(P().niveaux, f.niveau, "Tous les niveaux")}</select>
     <select id="fspec" aria-label="Spécialité">${opts(specs, f.spec, "Toutes spécialités")}</select>
-    ${fin?`<select id="fsit" aria-label="Situation">${opts(["À jour","Mois en cours","En retard","Inscription incomplète","Aucun paiement","Inactif"], f.situation, "Toutes situations")}</select>`:"<span></span>"}
+    ${fin?`<select id="fsit" aria-label="Situation">${opts(["À jour","Mois en cours","En retard","Inscription incomplète","Aucun paiement","Exonéré","Inactif"], f.situation, "Toutes situations")}</select>`:"<span></span>"}
   </div>
   <div class="tablewrap"><table><thead><tr><th>Matricule</th><th>Nom et prénoms</th><th>Niveau</th><th>Spécialité</th>${tel?"<th>Téléphone</th>":""}${fin?'<th class="r">Versé</th><th>Situation</th>':""}<th class="r">Assiduité</th></tr></thead><tbody>
   ${L.map(s=>{ const e = C.etu[s.matricule], p = C.peda[s.matricule]; return `<tr class="click" data-mat="${esc(s.matricule)}"><td class="num">${esc(s.matricule)}</td><td><b>${esc(s.nom)}</b></td><td>${esc(s.niveau)}</td><td class="small">${esc(codeSpec(s.specialite))}</td>${tel?`<td class="num">${esc(S.prive[s.matricule]?.tel||"—")}</td>`:""}${fin?`<td class="r">${F(e.totalVerse)}</td><td><span class="pill ${e.niv}">${esc(e.situation)}</span>${e.arriere?` <span class="small" style="color:var(--bad)">−${F(e.arriere)}</span>`:""}</td>`:""}<td class="r">${pct(p.assiduite)}</td></tr>`; }).join("") || `<tr><td colspan="9"><div class="empty">Aucun étudiant ne correspond.</div></td></tr>`}
@@ -701,10 +704,10 @@ const codeSpec = s => { const m = String(s||"").match(/\(([^)]+)\)\s*$/); return
 function ficheEtu(mat){
   const s = etuBy(mat); if (!s) return;
   const C = S.C, e = C.etu[mat], p = C.peda[mat], fin = can("fin.voir");
-  const moisCells = C.mois.map(m => { const v = e.parMois[m.code]||0; const st = v>=P().mensualite?"ok": m.fin<C.today?(v?"part":"due"): (m.debut<=C.today?"cur":(v?"part":"fut")); return `<div class="row" style="justify-content:space-between"><span class="small">${esc(m.libelle)}</span><span class="cell ${st}">${v>=P().mensualite?"Soldé":v?`${F(v)} / ${F(P().mensualite)} · reste ${F(P().mensualite-v)}`:(st==="fut"?"À venir":"0")}</span></div>`; }).join("");
+  const moisCells = e.exoM ? `<p class="small"><span class="pill ok">Exonéré(e) des mensualités</span> ${esc(s.motifExo||"")}</p>` : C.mois.map(m => { const v = e.parMois[m.code]||0; const st = v>=P().mensualite?"ok": m.fin<C.today?(v?"part":"due"): (m.debut<=C.today?"cur":(v?"part":"fut")); return `<div class="row" style="justify-content:space-between"><span class="small">${esc(m.libelle)}</span><span class="cell ${st}">${v>=P().mensualite?"Soldé":v?`${F(v)} / ${F(P().mensualite)} · reste ${F(P().mensualite-v)}`:(st==="fut"?"À venir":"0")}</span></div>`; }).join("");
   const wa = S.prive[mat]?.tel && waLink(S.prive[mat].tel, relanceMsg(s, e));
   openSheet(`<div class="spread"><div><h2>${esc(s.nom)}</h2><p class="small muted num">${esc(s.matricule)} · ${esc(s.niveau)} · ${esc(s.specialite)}</p></div>${fin?`<span class="pill ${e.niv}">${esc(e.situation)}</span>`:""}</div>
-    <dl class="dl"><dt>Académie</dt><dd>${s.academie?"Inscrit(e)":"Non inscrit(e)"}</dd><dt>Statut</dt><dd>${esc(s.statut||"Actif")}</dd>${can("tel.voir")?`<dt>Téléphone</dt><dd class="num">${esc(S.prive[mat]?.tel||"Non renseigné")}</dd>`:""}</dl>
+    <dl class="dl"><dt>Académie</dt><dd>${s.academie?"Inscrit(e)":"Non inscrit(e)"}</dd>${s.compte?`<dt>Membre de l'équipe</dt><dd>${esc(nomDe(s.compte))} · ${esc(fonctionsTxt(s.compte))}</dd>`:""}${s.exonere?`<dt>Exonération</dt><dd>${esc(EXO[s.exonere]||"")}${s.motifExo?` · ${esc(s.motifExo)}`:""}</dd>`:""}<dt>Statut</dt><dd>${esc(s.statut||"Actif")}</dd>${can("tel.voir")?`<dt>Téléphone</dt><dd class="num">${esc(S.prive[mat]?.tel||"Non renseigné")}</dd>`:""}</dl>
     ${fin?`<div class="card"><h3>Situation financière</h3>
       <dl class="dl"><dt>Inscription</dt><dd>${F(e.inscPayee)} / ${F(P().inscription)} FCFA ${e.inscOk?'<span class="pill ok">Soldée</span>':'<span class="pill warn">À compléter</span>'}</dd>
       <dt>Part imputée aux cotisations</dt><dd>${F(e.imputation)} FCFA</dd><dt>Cotisations versées</dt><dd>${F(e.cotiDirect)} FCFA</dd>
@@ -722,6 +725,10 @@ function ficheEtu(mat){
   $("#fEnc") && ($("#fEnc").onclick = () => formEnc(mat));
   $("#fEdit") && ($("#fEdit").onclick = () => formEtu(mat));
 }
+const EXO = {mensualites:"Exonéré(e) des mensualités", tout:"Exonéré(e) des mensualités et de l'inscription"};
+const fonctionsTxt = em => { const c = S.comptes[em]; if (!c) return ""; return [ROLES[c.role]?.l, ...(c.rolesSup||[]).map(r=>ROLES[r]?.l)].filter(Boolean).join(" + "); };
+/* Spécialité d'un compte (« IAN-RSI : … ») convertie au format des fiches étudiants (« … (IAN-RSI) ») */
+const specEtuDe = sp => { const code = codeSp(sp); const L = (P().specialites||[]).map(x=>`${x.intitule} (${x.code})`); return L.find(x=>codeSpec(x)===code) || ""; };
 const toutesFormations = () => S.formations.length ? S.formations : (P().formations||[]);
 const nomForm = c => toutesFormations().find(f=>f.code===c)?.intitule || "";
 function waLink(tel, msg){ let t = String(tel).replace(/\D/g,""); if (t.length===10) t = "225"+t; return `https://wa.me/${t}?text=${encodeURIComponent(msg)}`; }
@@ -733,8 +740,8 @@ function relanceMsg(s, e){
   if (e.resteCourant && S.C.courant) parts.push(`${F(e.resteCourant)} FCFA pour la cotisation de ${S.C.courant.libelle}`);
   return `Bonjour ${prenom}, ici la Communauté Virtuelle de Port-Bouët (CVPB). Selon notre registre, il reste ${parts.join(", ")}. Merci de régulariser auprès de la responsable des encaissements dès que possible. Si vous avez déjà payé, signalez-le-nous pour que nous vérifiions. Bonne journée !`;
 }
-async function formEtu(mat){
-  const isNew = !mat, s = isNew ? {niveau:"Licence 1", academie:true, statut:"Actif"} : etuBy(mat);
+async function formEtu(mat, pre){
+  const isNew = !mat, s = isNew ? {niveau:"Licence 1", academie:true, statut:"Actif", ...(pre||{})} : etuBy(mat);
   const specs = (P().specialites||[]).map(x=>`${x.intitule} (${x.code})`);
   openSheet(`<h2>${isNew?"Nouvel étudiant":"Modifier "+esc(s.nom)}</h2>
   <form id="ef" class="form">
@@ -747,6 +754,11 @@ async function formEtu(mat){
       <label class="f" for="e_st">Statut<select id="e_st">${opts(["Actif","Inactif"], s.statut||"Actif")}</select></label>
     </div>
     <label class="row small"><input type="checkbox" id="e_ac" ${s.academie?"checked":""}> Inscrit(e) à la CVPB Académie</label>
+    ${presidence() ? `<fieldset class="f"><legend>Membre de l'équipe apprenant (réservé à la Présidence)</legend>
+      <label class="f" for="e_cp">Compte lié (tuteur, responsable…)<select id="e_cp">${opts(actifsTous().filter(c=>c.role!=="president").map(c=>[c.em, `${c.nom} · ${fonctionsTxt(c.em)}`]), s.compte||"", "— Aucun —")}</select></label>
+      <div class="g2"><label class="f" for="e_ex">Exonération<select id="e_ex">${opts(Object.entries(EXO), s.exonere||"", "Aucune (paie normalement)")}</select></label>
+      <label class="f" for="e_mx">Motif<input type="text" id="e_mx" maxlength="80" value="${esc(s.motifExo||"")}" placeholder="Ex. : tuteur IAN-RSI L1"></label></div></fieldset>`
+    : s.exonere ? `<p class="small"><span class="pill ok">${esc(EXO[s.exonere])}</span> décidée par la Présidence.</p>` : ""}
     <div id="dup"></div>
     <div class="row"><button class="btn primary" type="submit">${isNew?"Enregistrer et générer le matricule":"Enregistrer"}</button><button class="btn" type="button" data-close>Annuler</button></div>
   </form>`);
@@ -757,6 +769,8 @@ async function formEtu(mat){
   $("#ef").onsubmit = async ev => {
     ev.preventDefault();
     const data = {nom:$("#e_n").value.trim().replace(/\s+/g," "), niveau:$("#e_niv").value, specialite:$("#e_sp").value, statut:$("#e_st").value, academie:$("#e_ac").checked, majLe:nowISO()};
+    if (presidence()){ data.compte = $("#e_cp").value; data.exonere = $("#e_ex").value; data.motifExo = $("#e_mx").value.trim();
+      if (data.compte){ const dj = S.etudiants.find(x=>x.compte===data.compte && x.matricule!==mat); if (dj) return toast(`Ce compte est déjà lié à ${dj.matricule} · ${dj.nom}.`); } }
     if (!data.nom){ toast("Le nom est obligatoire."); return; }
     const tel = $("#e_tel").value.trim();
     let id = mat;
@@ -909,7 +923,7 @@ function vCotisations(){
   if (f.situation) L = L.filter(s=>C.etu[s.matricule].situation===f.situation);
   const actifs = S.etudiants.filter(s=>s.statut!=="Inactif");
   const tot = k => actifs.reduce((a,s)=>a+C.etu[s.matricule][k],0);
-  const attenduCourant = C.courant ? actifs.length*P().mensualite : 0;
+  const attenduCourant = C.courant ? actifs.filter(s=>!C.etu[s.matricule].exoM).length*P().mensualite : 0;
   const recuCourant = C.courant ? actifs.reduce((a,s)=>a+(C.etu[s.matricule].parMois[C.courant.code]||0),0) : 0;
   return `<div class="spread"><h2>Suivi des inscriptions et cotisations</h2>${can("export")?`<button class="btn" id="expCot">Exporter (CSV)</button>`:""}</div>
   <div class="kpis">
@@ -919,11 +933,11 @@ function vCotisations(){
     <div class="kpi g"><span class="v">${F(tot("pool"))}</span><span class="l">FCFA affectés aux cotisations</span></div>
     <div class="kpi"><span class="v">${actifs.filter(s=>C.etu[s.matricule].enEchelonnement).length}</span><span class="l">étudiant(s) en paiement échelonné</span></div>
   </div>
-  <div class="row"><select id="csit" style="width:auto" aria-label="Situation">${opts(["À jour","Mois en cours","En retard","Inscription incomplète","Aucun paiement","Inactif"], f.situation, "Toutes situations")}</select>
+  <div class="row"><select id="csit" style="width:auto" aria-label="Situation">${opts(["À jour","Mois en cours","En retard","Inscription incomplète","Aucun paiement","Exonéré","Inactif"], f.situation, "Toutes situations")}</select>
   <span class="small muted">Règle : l'inscription (${F(P().inscription)} FCFA) comprend le T-shirt (${F(P().tshirt)}) ; tout montant au-delà du T-shirt est imputé aux cotisations, affectées mois après mois. Un mois devient un arriéré une fois terminé. Le T-shirt obligatoire se paie en une seule fois ; le reste de l'inscription et les mensualités peuvent être payés en plusieurs tranches, chaque tranche complétant le plus ancien mois non soldé (case orange = mois payé en partie).</span></div>
   <div class="tablewrap"><table><thead><tr><th>Matricule</th><th>Nom et prénoms</th><th>Inscription</th>${C.mois.map(m=>`<th title="${esc(m.libelle)}">${esc(m.code)}</th>`).join("")}<th class="r">Arriéré</th><th>Situation</th>${tel?"<th></th>":""}</tr></thead><tbody>
-  ${L.map(s=>{ const e = C.etu[s.matricule]; return `<tr class="click" data-mat="${esc(s.matricule)}"><td class="num">${esc(s.matricule)}</td><td><b>${esc(s.nom)}</b></td><td>${e.inscOk?'<span class="cell ok">Soldée</span>':e.inscPayee?`<span class="cell part">${F(e.inscPayee)}</span>`:e.tshirtVendu?'<span class="cell part" title="T-shirt acheté hors inscription">T-shirt seul</span>':'<span class="cell due">Non payée</span>'}</td>
-    ${C.mois.map(m=>{ const v = e.parMois[m.code]||0, full = v>=P().mensualite; const st = full?"ok": m.fin<C.today?(v?"part":"due"): m.debut<=C.today?"cur":(v?"part":"fut"); return `<td><span class="cell ${st}" ${v&&!full?`title="${F(v)} / ${F(P().mensualite)} FCFA versés"`:""}>${full?"✓":v?F(v):st==="fut"?"·":"0"}</span></td>`; }).join("")}
+  ${L.map(s=>{ const e = C.etu[s.matricule]; return `<tr class="click" data-mat="${esc(s.matricule)}"><td class="num">${esc(s.matricule)}</td><td><b>${esc(s.nom)}</b></td><td>${e.exoI?'<span class="cell ok">Exonéré</span>':e.inscOk?'<span class="cell ok">Soldée</span>':e.inscPayee?`<span class="cell part">${F(e.inscPayee)}</span>`:e.tshirtVendu?'<span class="cell part" title="T-shirt acheté hors inscription">T-shirt seul</span>':'<span class="cell due">Non payée</span>'}</td>
+    ${C.mois.map(m=>{ if (e.exoM) return `<td><span class="cell ok" title="Exonéré(e) des mensualités">Exo</span></td>`; const v = e.parMois[m.code]||0, full = v>=P().mensualite; const st = full?"ok": m.fin<C.today?(v?"part":"due"): m.debut<=C.today?"cur":(v?"part":"fut"); return `<td><span class="cell ${st}" ${v&&!full?`title="${F(v)} / ${F(P().mensualite)} FCFA versés"`:""}>${full?"✓":v?F(v):st==="fut"?"·":"0"}</span></td>`; }).join("")}
     <td class="r" style="color:${e.arriere?"var(--bad)":"inherit"}">${F(e.arriere)}</td><td><span class="pill ${e.niv}">${esc(e.situation)}</span></td>
     ${tel?`<td>${S.prive[s.matricule]?.tel && (e.arriere||e.resteCourant||!e.inscOk) && s.statut!=="Inactif" ?`<a class="btn sm" href="${waLink(S.prive[s.matricule].tel, relanceMsg(s,e))}" target="_blank" rel="noopener" data-stop="1">Relancer</a>`:""}</td>`:""}</tr>`; }).join("")}
   </tbody></table></div>
@@ -1369,7 +1383,7 @@ function vAdmin(){
   let body = "";
   if (sub==="comptes"){
     const resp = Object.entries(S.comptes).filter(([,c])=>c.role!=="tuteur").sort((a,b)=>a[1].nom.localeCompare(b[1].nom,"fr")), tut = Object.entries(S.comptes).filter(([,c])=>c.role==="tuteur").sort((a,b)=>a[1].nom.localeCompare(b[1].nom,"fr"));
-    const ligne = ([u,c]) => `<div class="prow"><span><b>${esc(c.nom)}</b> ${c.actif===false?'<span class="pill bad">Suspendu</span>':""}${!c.uid&&c.role!=="president"?' <span class="pill warn">Jamais connecté</span>':""}<br><span class="small muted">${esc([ROLES[c.role]?.l, ...(c.rolesSup||[]).map(r=>ROLES[r]?.l)].filter(Boolean).join(" + "))}${(c.fonctions||[]).length?` · ${esc(c.fonctions.map(titreFonction).join(", "))}`:""}${c.role==="tuteur"?` · ${esc(codeSp(c.specialite))} ${esc(c.niveau||"")}`:""} · <span class="num" style="overflow-wrap:anywhere">${esc(u)}</span>${c.derniereConnexion?` · vu le ${new Date(c.derniereConnexion).toLocaleDateString("fr-FR",{day:"numeric",month:"short"})}`:""}</span></span>${u!==S.email?`<button class="btn sm ghost" data-cpt="${esc(u)}">Modifier</button>`:'<span class="pill">Vous</span>'}</div>`;
+    const ligne = ([u,c]) => `<div class="prow"><span><b>${esc(c.nom)}</b> ${c.actif===false?'<span class="pill bad">Suspendu</span>':""}${!c.uid&&c.role!=="president"?' <span class="pill warn">Jamais connecté</span>':""}<br><span class="small muted">${esc([ROLES[c.role]?.l, ...(c.rolesSup||[]).map(r=>ROLES[r]?.l)].filter(Boolean).join(" + "))}${(c.fonctions||[]).length?` · ${esc(c.fonctions.map(titreFonction).join(", "))}`:""}${c.role==="tuteur"?` · ${esc(codeSp(c.specialite))} ${esc(c.niveau||"")}`:""} · <span class="num" style="overflow-wrap:anywhere">${esc(u)}</span>${c.derniereConnexion?` · vu le ${new Date(c.derniereConnexion).toLocaleDateString("fr-FR",{day:"numeric",month:"short"})}`:""}</span></span><span class="row" style="flex-wrap:nowrap">${(()=>{ const et = S.etudiants.find(x=>x.compte===u); return et ? `<button class="btn sm ghost" data-fiche-etu="${esc(et.matricule)}" title="Fiche apprenant">${esc(et.matricule)}</button>` : c.role!=="president" && presidence() ? `<button class="btn sm ghost" data-app="${esc(u)}" title="Créer sa fiche d'apprenant">+ Apprenant</button>` : ""; })()}${u!==S.email?`<button class="btn sm ghost" data-cpt="${esc(u)}">Modifier</button>`:'<span class="pill">Vous</span>'}</span></div>`;
     body = `<div class="spread"><p class="small muted">Ajoutez chaque personne avec son adresse Google UVCI. Elle se connecte ensuite avec « Se connecter avec Google UVCI », sans mot de passe à retenir.</p><button class="btn primary" id="newCpt">+ Ajouter une personne</button></div>
       <div class="card"><h3>Responsables (${resp.length})</h3>${resp.map(ligne).join("")||'<div class="empty">Aucun.</div>'}</div>
       <div class="card"><h3>Tuteurs (${tut.length})</h3>${tut.map(ligne).join("")||'<div class="empty">Aucun tuteur. Créez leurs comptes avec le rôle Tuteur.</div>'}</div>
@@ -1574,6 +1588,8 @@ function bind(v){
   if (v==="admin"){
     on("#newCpt","onclick",()=>formCompte());
     main.querySelectorAll("[data-cpt]").forEach(b=>b.onclick=()=>formCompte(b.dataset.cpt));
+    main.querySelectorAll("[data-fiche-etu]").forEach(b=>b.onclick=()=>ficheEtu(b.dataset.ficheEtu));
+    main.querySelectorAll("[data-app]").forEach(b=>b.onclick=()=>{ const c = S.comptes[b.dataset.app]||{}; formEtu(null, {nom:c.nom||"", niveau:c.niveau||"Licence 2", specialite:specEtuDe(c.specialite), compte:b.dataset.app, exonere:"mensualites", motifExo:fonctionsTxt(b.dataset.app)}); });
     /* L'état de l'import est gardé dans S.imp : l'écran se redessine à chaque mise à jour en direct */
     if ($("#impF")){
       const info = t => { S.imp.info = t; const el = $("#impInfo"); if (el) el.textContent = t; };
@@ -2939,11 +2955,11 @@ function anneaux(){
     const E = etatSuivi(), X = etatAccomp();
     const add = (num, den, label, violet) => rr.push(ringHTML(ratio(num, den), den ? `${num}/${den}` : "—", label, violet));
     const addP = (f, label, violet) => rr.push(ringHTML(f, f==null ? "—" : Math.round(f*100)+" %", label, violet));
-    if (["president","vicepresident"].includes(r)){ add(E.soumis, E.attendus, "rapports des tuteurs"); add(consOk, consMois.length, "consignes à temps (mois)", true); add(actifs.filter(s=>["À jour","Mois en cours"].includes(C.etu[s.matricule]?.situation)).length, actifs.length, "étudiants à jour"); }
+    if (["president","vicepresident"].includes(r)){ add(E.soumis, E.attendus, "rapports des tuteurs"); add(consOk, consMois.length, "consignes à temps (mois)", true); add(actifs.filter(s=>["À jour","Mois en cours","Exonéré"].includes(C.etu[s.matricule]?.situation)).length, actifs.length, "étudiants à jour"); }
     else if (r==="secretaire"){ add(E.soumis, E.attendus, "rapports soumis"); add(S.rapportsHebdo.filter(x=>x.statut==="Contrôlé").length, S.rapportsHebdo.filter(x=>["Validé","Exploité","Contrôlé"].includes(x.statut)).length, "rapports contrôlés", true); add(X.D.filter(d=>["Résolu","Clos"].includes(d.statut)).length, X.D.length, "suivis résolus"); }
     else if (r==="tuteurs"){ add(E.soumis, E.attendus, "rapports soumis"); add(E.valides, E.soumis, "rapports validés", true); add(E.affectes, actifs.filter(s=>s.academie).length, "étudiants affectés"); }
     else if (r==="accompagnement"){ add(X.terminees, X.engagees, "actions terminées"); add(X.D.filter(d=>["Résolu","Clos"].includes(d.statut)).length, X.D.length, "suivis résolus", true); add(S.rapportsHebdo.filter(x=>["Exploité","Contrôlé"].includes(x.statut)).length, S.rapportsHebdo.filter(x=>["Validé","Exploité","Contrôlé"].includes(x.statut)).length, "rapports exploités"); }
-    else if (["encaissement","caisse","tresorerie"].includes(r)){ add(actifs.filter(s=>C.etu[s.matricule]?.inscOk).length, actifs.length, "inscriptions soldées"); add(actifs.filter(s=>["À jour","Mois en cours"].includes(C.etu[s.matricule]?.situation)).length, actifs.length, "étudiants à jour", true); add(S.depots.filter(d=>d.statut==="Validé").length, S.depots.filter(d=>d.statut!=="Annulé").length, "dépôts validés"); }
+    else if (["encaissement","caisse","tresorerie"].includes(r)){ add(actifs.filter(s=>C.etu[s.matricule]?.inscOk).length, actifs.length, "inscriptions soldées"); add(actifs.filter(s=>["À jour","Mois en cours","Exonéré"].includes(C.etu[s.matricule]?.situation)).length, actifs.length, "étudiants à jour", true); add(S.depots.filter(d=>d.statut==="Validé").length, S.depots.filter(d=>d.statut!=="Annulé").length, "dépôts validés"); }
     else if (r==="formation"){ add(S.seances.filter(x=>x.validation?.statut==="Validée").length, S.seances.length, "séances validées"); addP(assid, "assiduité moyenne", true); const act = S.formations.filter(f=>["Ouverte","En cours"].includes(f.statut)); add(act.filter(f=>(f.formateurs||[]).length).length, act.length, "formations avec formateur"); }
     else if (r==="pedagogie"){ const mes = S.seances; add(mes.filter(x=>x.validation?.statut==="Validée").length, mes.length, "séances validées"); addP(assid, "assiduité moyenne", true); add(S.formations.filter(f=>["Ouverte","En cours"].includes(f.statut)).length, S.formations.length, "formations actives"); }
     else if (r==="tuteur"){ const mes = S.rapportsHebdo.filter(x=>x.tuteurEmail===S.email && x.statut!=="Brouillon"), dues = semainesDues(); add(dues.filter(s=>mes.some(x=>x.semaine===s)).length, dues.length, "semaines rendues"); add(mes.filter(x=>["Validé","Exploité","Contrôlé"].includes(x.statut)).length, mes.length, "rapports validés", true); const pres = mes.reduce((a,x)=>{ const n = Number(x.nbSeances)||0; Object.values(x.presences||{}).forEach(v=>{ a.p+=Number(v)||0; a.t+=n; }); return a; },{p:0,t:0}); addP(ratio(pres.p, pres.t), "présence de mes étudiants"); }
