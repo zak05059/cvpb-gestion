@@ -224,8 +224,8 @@ const dLong = s => s ? parseD(s).toLocaleDateString("fr-FR",{weekday:"short",day
 const pct = v => v==null ? "—" : Math.round(v*100)+" %";
 const nowISO = () => new Date().toISOString();
 function toast(m){ const t=$("#toast"); t.textContent=m; t.classList.add("show"); clearTimeout(toast.t); toast.t=setTimeout(()=>t.classList.remove("show"),3200); }
-function openSheet(html){ $("#sheet").innerHTML = html; $("#overlay").classList.add("open"); $("#sheet").querySelectorAll("[data-close]").forEach(b=>b.onclick=closeSheet); const f=$("#sheet").querySelector("input,select,textarea"); f && f.focus(); }
-function closeSheet(){ $("#overlay").classList.remove("open"); $("#sheet").innerHTML=""; queueRender(); }
+function openSheet(html){ $("#sheet").classList.remove("flot"); document.body.classList.remove("menu-ouvert"); $("#sheet").innerHTML = html; $("#overlay").classList.add("open"); $("#sheet").querySelectorAll("[data-close]").forEach(b=>b.onclick=closeSheet); const f=$("#sheet").querySelector("input,select,textarea"); f && f.focus(); }
+function closeSheet(){ $("#overlay").classList.remove("open"); $("#sheet").classList.remove("flot"); document.body.classList.remove("menu-ouvert"); $("#sheet").innerHTML=""; queueRender(); }
 $("#overlay").addEventListener("click", e => { if (e.target.id==="overlay") closeSheet(); });
 addEventListener("keydown", e => { if (e.key==="Escape" && $("#overlay").classList.contains("open")) closeSheet(); });
 const opts = (L, sel, ph) => (ph!=null?`<option value="">${esc(ph)}</option>`:"") + L.map(v => { const [val,lab] = Array.isArray(v)?v:[v,v]; return `<option value="${esc(val)}" ${String(val)===String(sel??"")?"selected":""}>${esc(lab)}</option>`; }).join("");
@@ -1591,10 +1591,11 @@ function navigation(items, courant, principaux){
   const p3 = pr.slice(0,3);
   bn.innerHTML = p3.slice(0,2).map(lien).join("") + `<button type="button" class="fab" id="bFab" aria-label="Actions rapides">${ICO.nouveau}</button>` + (p3[2] ? lien(p3[2]) : "<span></span>")
     + `<button type="button" id="bMenu" ${p3.some(x=>x.id===courant)?"":'aria-current="page"'}>${ICO.menu}<span>Menu</span></button>`;
-  $("#bFab").onclick = actionsRapides;
+  $("#bFab").onclick = () => document.body.classList.contains("menu-ouvert") ? closeSheet() : actionsRapides();
   $("#bMenu").onclick = () => {
     openSheet(`<div class="spread"><h2>Menu</h2><button class="btn ghost" data-close>Fermer</button></div>
       <div class="menu">${items.map(x=>`<a href="#${x.id}" ${x.id===courant?'aria-current="page"':""}>${icoDe(x.id)}<span>${esc(x.l)}${x.n?` (${x.n})`:""}</span></a>`).join("")}</div>`);
+    volant();
     $("#sheet").querySelectorAll(".menu a").forEach(a => a.addEventListener("click", () => closeSheet()));
   };
   const av = $("#avatar"); if (av && compte()){ av.hidden = false; av.textContent = initiales(compte().nom); }
@@ -2879,6 +2880,10 @@ function anneaux(){
     return rr.length ? `<div class="rings">${rr.join("")}</div>` : "";
   } catch(e){ console.error(e); return ""; }
 }
+/* Menu volant : le panneau flotte au-dessus de la barre, ses boutons jaillissent un à un */
+function volant(){ $("#sheet").classList.add("flot"); document.body.classList.add("menu-ouvert"); $("#sheet").querySelectorAll(".actions button,.menu a").forEach((b,i)=>b.style.setProperty("--k", i)); }
+let dernierY = 0;
+addEventListener("scroll", () => { const y = scrollY, bn = $("#bnav"); if (!bn || Math.abs(y - dernierY) < 10) return; bn.classList.toggle("cache", y > dernierY && y > 160 && innerHeight + y < document.documentElement.scrollHeight - 40); dernierY = y; }, {passive:true});
 function actionsRapides(){
   const r = role(), go = h => () => { closeSheet(); location.hash = h; };
   const A = [
@@ -2904,6 +2909,7 @@ function actionsRapides(){
     ["Rechercher", `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>`, () => rechercheGlobale()]
   ].filter(Boolean);
   openSheet(`<div class="spread"><h2>Actions rapides</h2><button class="btn ghost" data-close>Fermer</button></div><div class="actions">${A.map((a,i)=>`<button type="button" data-ar="${i}">${a[1]}<span>${esc(a[0])}</span></button>`).join("")}</div>`);
+  volant();
   $("#sheet").querySelectorAll("[data-ar]").forEach(b => b.onclick = () => { const f = A[Number(b.dataset.ar)][2]; closeSheet(); setTimeout(f, 60); });
 }
 /* Après chaque rendu : animations à l'arrivée sur une page seulement (pas à chaque mise à jour en direct) */

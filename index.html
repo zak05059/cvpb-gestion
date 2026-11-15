@@ -494,10 +494,110 @@ main.anim > *{animation:rise .5s var(--ease) both;animation-delay:calc(var(--i,0
 main.anim .kpis > *,main.anim .rings > *,main.anim .clist > *{animation:rise .45s var(--ease) both;animation-delay:calc(var(--i,0) * 55ms + var(--j,0) * 45ms)}
 .overlay.open .sheet{animation:glisse .38s var(--spring)}
 .toast.show{animation:pop .3s var(--spring)}
+/* ===================== Design « Orbite » (15/11/2026) : fond nuit neutre, cartes plates, accent vert CVPB, menu volant ===================== */
+:root{
+  --bg:#090a0f; --bg-2:#0d0f15; --surface:#14161d; --surface-2:#191c24; --surface-3:#20242e; --line:rgba(255,255,255,.06); --line-2:rgba(255,255,255,.12);
+  --ink:#f4f5f7; --muted:#8d93a1;
+  --violet:#c06bd0; --violet-soft:rgba(192,107,208,.14);
+  --vert:#5fdc74; --vert-soft:rgba(95,220,116,.13); --ok:#5fdc74; --ok-soft:rgba(95,220,116,.13);
+  --accent:linear-gradient(135deg,#b9f26a 0%,#5fdc74 55%,#2e9b3f 100%);
+  --glow-g:0 10px 30px rgba(95,220,116,.35); --glow-v:0 10px 30px rgba(122,10,134,.4);
+  --shadow:0 12px 32px rgba(0,0,0,.35); --r:24px;
+}
+:root[data-theme="light"]{ --bg:#f3f4f7; --bg-2:#eceef2; --surface:#ffffff; --surface-2:#ffffff; --surface-3:#f1f2f6; --line:#e6e8ee; --line-2:#d5d9e2; --ink:#12141a; --muted:#646b7a; --vert:#2e9b3f; --violet:#7a0a86; --accent:linear-gradient(135deg,#7bd65a,#2e9b3f); --shadow:0 8px 24px rgba(18,20,26,.07); }
+body{background:radial-gradient(900px 480px at 100% -10%, rgba(122,10,134,.22), transparent 62%),radial-gradient(700px 420px at -10% 105%, rgba(46,155,63,.14), transparent 60%),var(--bg);background-attachment:fixed;font-family:"Plus Jakarta Sans","IBM Plex Sans","Segoe UI",system-ui,sans-serif}
+:root[data-theme="light"] body{background:var(--bg)}
+header.top{background:rgba(9,10,15,.7);border-bottom:0}
+header.top::after{display:none}
+:root[data-theme="light"] header.top{background:rgba(243,244,247,.8)}
+nav.tabs{background:transparent;border:0;padding:8px 14px;gap:8px}
+nav.tabs a{background:var(--surface);border:1px solid var(--line);border-radius:999px;padding:8px 14px;font-size:.84rem;transition:transform .2s var(--ease),background .2s}
+nav.tabs a:active{transform:scale(.95)}
+nav.tabs a[aria-current="page"],body.tut nav.tabs a[aria-current="page"]{background:var(--accent);color:#07210c;border-color:transparent;font-weight:700}
+.card,.kpi,.tablewrap,.citem,.alert,.sheet,.menu a,.empty{background:var(--surface);border:1px solid var(--line);box-shadow:none}
+.card{border-radius:var(--r);padding:18px}
+.card .card{background:var(--surface-2)}
+h2{font-size:1.45rem;font-weight:800} h3{font-weight:700}
+/* Tuiles d'indicateurs : chiffre large, pastille de couleur */
+.kpi,.kpi.g,.kpi.warn,.kpi.bad{border-radius:22px;padding:16px 16px 14px;background:var(--surface-2);border:1px solid var(--line)}
+.kpi::before{left:auto;right:14px;top:14px;bottom:auto;width:9px;height:9px;border-radius:50%;box-shadow:0 0 0 4px color-mix(in srgb,currentColor 18%,transparent)}
+.kpi .v{font-size:1.75rem;font-weight:800;letter-spacing:-.03em}
+.kpi .l{font-size:.76rem}
+.kpi:hover,.citem:hover{transform:translateY(-3px);border-color:var(--line-2)}
+/* Lignes de liste : capsules avec pastille */
+.citem{border-left-width:1px;border-radius:20px;padding:14px 14px 14px 30px;position:relative;background:var(--surface-2)}
+.citem::before{content:"";position:absolute;left:13px;top:20px;width:8px;height:8px;border-radius:50%;background:var(--violet)}
+.citem.urg::before,.citem.late::before{background:var(--bad)} .citem.done::before{background:var(--vert)}
+.citem.late{border-color:rgba(255,107,97,.28)}
+.prow{padding:10px 0}
+.pill{border-radius:999px;font-weight:600}
+/* Onglets : contrôle segmenté */
+.subtabs{background:var(--surface);border:1px solid var(--line);border-radius:18px;padding:5px;gap:4px;width:fit-content;max-width:100%}
+.subtabs button{background:transparent;border:0;border-radius:13px;padding:8px 14px;color:var(--muted);font-weight:600}
+.subtabs button[aria-pressed="true"]{background:var(--surface-3);color:var(--ink);box-shadow:inset 0 0 0 1px var(--line-2)}
+.subtabs button[aria-pressed="true"]::before{content:"";display:inline-block;width:7px;height:7px;border-radius:50%;background:var(--vert);margin-right:7px;vertical-align:middle;box-shadow:0 0 10px var(--vert)}
+/* Boutons */
+.btn{border-radius:14px;transition:transform .15s var(--ease),filter .2s,box-shadow .2s}
+.btn:active{transform:scale(.95)}
+.btn.primary,.btn.vert{background:var(--accent);color:#07210c;border-color:transparent;font-weight:700;box-shadow:var(--glow-g)}
+.btn.primary:hover,.btn.vert:hover{filter:brightness(1.06)}
+input,select,textarea{border-radius:14px !important;background:var(--surface-3);border-color:var(--line)}
+input:focus,select:focus,textarea:focus{border-color:var(--vert);box-shadow:0 0 0 3px var(--vert-soft);outline:0}
+/* En-tête d'accueil : carte de membre */
+.hero{border-radius:28px;padding:22px 20px;color:#07210c;background:linear-gradient(125deg,#c8f57a 0%,#6fdc6a 45%,#2e9b3f 100%);box-shadow:0 18px 44px rgba(46,155,63,.28)}
+.hero::after{content:"";position:absolute;inset:0;background:radial-gradient(260px 160px at 105% 0%, rgba(122,10,134,.55), transparent 70%),linear-gradient(115deg,transparent 40%,rgba(255,255,255,.28) 50%,transparent 60%);background-size:auto,220% 100%;animation:reflet 6s ease-in-out infinite;pointer-events:none}
+.hero > *{position:relative;z-index:1}
+.hero h2{color:#06200b;font-size:1.6rem} .hero p{color:rgba(6,32,11,.78);font-weight:600}
+.hero .wm{opacity:.22;mix-blend-mode:multiply}
+.hero .srch{background:rgba(6,32,11,.16);border-color:rgba(6,32,11,.14);color:#06200b;font-weight:600}
+.hero .srch:hover{background:rgba(6,32,11,.24)}
+body.tut .hero{background:linear-gradient(125deg,#e3b5ee 0%,#b04cc0 45%,#7a0a86 100%);box-shadow:0 18px 44px rgba(122,10,134,.3);color:#fff}
+body.tut .hero h2{color:#fff} body.tut .hero p{color:rgba(255,255,255,.85)} body.tut .hero .srch{background:rgba(255,255,255,.16);border-color:rgba(255,255,255,.2);color:#fff}
+.avatar{background:var(--accent) !important;color:#07210c !important}
+/* ---------- Menu volant : barre flottante en capsule, se replie au défilement ---------- */
+main{padding-bottom:130px}
+.bnav{left:50%;right:auto;width:min(430px,calc(100% - 28px));transform:translateX(-50%);bottom:calc(14px + env(safe-area-inset-bottom));border-radius:999px;padding:8px 10px;background:rgba(20,22,29,.86);border:1px solid var(--line-2);box-shadow:0 18px 50px rgba(0,0,0,.6),0 0 0 1px rgba(255,255,255,.03) inset;transition:transform .45s var(--spring),opacity .3s;animation:envol .6s var(--spring) both}
+:root[data-theme="light"] .bnav{background:rgba(255,255,255,.92);box-shadow:0 14px 40px rgba(18,20,26,.18)}
+.bnav.cache{transform:translate(-50%,calc(100% + 40px));opacity:0}
+.bnav a,.bnav button{border-radius:999px;font-size:.64rem;padding:6px 2px 4px;transition:color .2s,transform .2s var(--spring)}
+.bnav a:active,.bnav button:active{transform:scale(.9)}
+.bnav [aria-current="page"]{color:var(--vert)}
+.bnav [aria-current="page"] svg,body.tut .bnav [aria-current="page"] svg{background:none;box-shadow:none;color:var(--vert);padding:0;width:23px;animation:rebond .5s var(--spring)}
+.bnav [aria-current="page"]::after{content:"";position:absolute;bottom:-1px;left:50%;width:5px;height:5px;margin-left:-2.5px;border-radius:50%;background:var(--vert);box-shadow:0 0 10px var(--vert);animation:pop .4s var(--spring)}
+.bnav .fab{width:54px;height:54px;margin-top:0;border:0;background:var(--accent);color:#07210c;box-shadow:0 8px 26px rgba(95,220,116,.5);transition:transform .35s var(--spring),box-shadow .3s}
+.bnav .fab::after{display:none}
+.bnav .fab::before{content:"";position:absolute;inset:-6px;border-radius:50%;border:2px solid rgba(95,220,116,.35);animation:onde 2.6s ease-out infinite}
+.bnav .fab:active{transform:scale(.88)}
+body.menu-ouvert .bnav .fab{transform:rotate(135deg);box-shadow:0 8px 30px rgba(95,220,116,.7)}
+body.menu-ouvert .bnav{z-index:45}
+/* Panneau volant (actions rapides et menu) : flotte au-dessus de la barre */
+.overlay{backdrop-filter:blur(10px);-webkit-backdrop-filter:blur(10px);background:rgba(4,5,8,.55)}
+.sheet.flot{width:min(430px,calc(100% - 28px));max-height:min(68vh,560px);margin:0 auto calc(96px + env(safe-area-inset-bottom));border-radius:30px;padding:18px;background:rgba(22,24,32,.94);border:1px solid var(--line-2);box-shadow:0 30px 80px rgba(0,0,0,.7);transform-origin:50% 100%;animation:eclot .42s var(--spring) both !important}
+:root[data-theme="light"] .sheet.flot{background:rgba(255,255,255,.97)}
+.sheet.flot::before{display:none}
+@media (min-width:720px){.overlay:has(.sheet.flot){align-items:flex-end}}
+.sheet.flot .actions,.sheet.flot .menu{grid-template-columns:repeat(3,1fr);gap:10px}
+.sheet.flot .actions button,.sheet.flot .menu a{display:grid;justify-items:center;text-align:center;gap:8px;padding:14px 6px;border-radius:20px;background:var(--surface-3);border:1px solid var(--line);font-size:.74rem;font-weight:600;color:var(--ink);animation:jaillit .45s var(--spring) both;animation-delay:calc(60ms + var(--k,0) * 28ms)}
+.sheet.flot .actions button svg,.sheet.flot .menu a svg{width:24px;height:24px;color:var(--vert);padding:9px;box-sizing:content-box;border-radius:50%;background:var(--vert-soft)}
+.sheet.flot .menu a[aria-current="page"]{border-color:var(--vert);background:var(--vert-soft)}
+.sheet.flot .actions button:active,.sheet.flot .menu a:active{transform:scale(.93)}
+.sheet{border-radius:28px 28px 0 0}
+.toast{border-radius:999px}
+.ring .pr{stroke:var(--vert)} .ring.v .pr{stroke:var(--violet)}
+/* Ordinateur : le menu volant remplace la barre d'onglets du haut */
+@media (min-width:900px){ .bnav{display:grid;width:460px} nav.tabs{display:none} main{padding-bottom:130px} .toast{bottom:110px} .sheet.flot{width:520px;max-height:70vh} .sheet.flot .actions,.sheet.flot .menu{grid-template-columns:repeat(4,1fr)} }
+.bnav[hidden]{display:none !important}
+@keyframes envol{from{transform:translate(-50%,120%);opacity:0}to{transform:translate(-50%,0);opacity:1}}
+@keyframes eclot{from{opacity:0;transform:translateY(40px) scale(.7)}to{opacity:1;transform:none}}
+@keyframes jaillit{from{opacity:0;transform:translateY(22px) scale(.6)}to{opacity:1;transform:none}}
+@keyframes rebond{0%{transform:translateY(0)}40%{transform:translateY(-7px)}100%{transform:translateY(0)}}
+@keyframes onde{0%{transform:scale(.9);opacity:.9}100%{transform:scale(1.45);opacity:0}}
+@keyframes reflet{0%,100%{background-position:0 0,120% 0}50%{background-position:0 0,-20% 0}}
+main.anim > *{animation:rise .55s var(--spring) both;animation-delay:calc(var(--i,0) * 60ms)}
 @media (prefers-reduced-motion: reduce){*,*::before,*::after{animation:none !important;transition:none !important}}
 </style>
 <body>
-<script>try{var t=localStorage.getItem("cvpb-theme")||"dark";if(t==="auto")t=matchMedia("(prefers-color-scheme: light)").matches?"light":"dark";document.documentElement.dataset.theme=t;document.querySelector('meta[name=theme-color]').content=t==="light"?"#f5f2f7":"#0e0812";}catch(e){}</script>
+<script>try{var t=localStorage.getItem("cvpb-theme")||"dark";if(t==="auto")t=matchMedia("(prefers-color-scheme: light)").matches?"light":"dark";document.documentElement.dataset.theme=t;document.querySelector('meta[name=theme-color]').content=t==="light"?"#f3f4f7":"#090a0f";}catch(e){}</script>
 <div id="splash" aria-hidden="true"><div class="lg"><img src="icon-512.png" alt=""></div><h1>CVPB Manager</h1><p>Communauté Virtuelle de Port-Bouët</p></div>
 <svg width="0" height="0" style="position:absolute" aria-hidden="true"><defs><linearGradient id="gradRing" x1="0" y1="0" x2="1" y2="1"><stop offset="0%" stop-color="#45c25a"/><stop offset="100%" stop-color="#b04cc0"/></linearGradient></defs></svg>
 <header class="top">
@@ -522,6 +622,6 @@ main.anim .kpis > *,main.anim .rings > *,main.anim .clist > *{animation:rise .45
   setTimeout(function(){ montre(""); }, 8000);
 })();
 </script>
-<script type="module" src="app.js?v=15"></script>
+<script type="module" src="app.js?v=17"></script>
 </body>
 </html>
