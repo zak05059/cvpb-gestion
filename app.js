@@ -385,11 +385,11 @@ function rendu(){
   navigation(VIEWS.filter(x=>x.ok()).map(x=>({id:x.id, l:x.id==="consignes"&&!lectureTotale()?"Mes consignes":lab(x), n:nb(x)})), v, principauxDe(role()));
   majBadge();
   if (v==="depots") S.sub.caisse = "depots";
-  main.innerHTML = (v==="accueil" ? heroAccueil() + anneaux() + blocGouv() + blocConsignes() : "") + ({delegues:vDelegues, taches:vTaches, decisions:vDecisions, reunions:vReunions, organigramme:vOrganigramme, audit:vAudit, suivi:vSuivi, synthese:vSynthese, catalogue:vCatalogue, messages:vMessages, consignes:vConsignes, rapports:vRapports, evaluations:vEvaluations, classement:vClassement, accueil:vAccueil, etudiants:vEtudiants, registre:vRegistre, cotisations:vCotisations, caisse:vCaisse, depots:vCaisse, pedagogie:vPedagogie, tutorat:vTutorat, notifications:vNotifs, admin:vAdmin, compte:vCompte}[v])();
+  main.innerHTML = (v==="accueil" ? heroAccueil() + anneaux() + (lectureTotale() ? blocActivite() : "") + blocGouv() + blocConsignes() : "") + ({delegues:vDelegues, taches:vTaches, decisions:vDecisions, reunions:vReunions, organigramme:vOrganigramme, audit:vAudit, suivi:vSuivi, synthese:vSynthese, catalogue:vCatalogue, messages:vMessages, consignes:vConsignes, rapports:vRapports, evaluations:vEvaluations, classement:vClassement, accueil:vAccueil, etudiants:vEtudiants, registre:vRegistre, cotisations:vCotisations, caisse:vCaisse, depots:vCaisse, pedagogie:vPedagogie, tutorat:vTutorat, notifications:vNotifs, admin:vAdmin, compte:vCompte}[v])();
   bind(v==="depots" ? "caisse" : v);
   if (v==="compte") bindCompte();
   if (v==="notifications") marquerLu();
-  if (v==="accueil"){ bindGouvCommun(); bindDeleguesCommun(); }
+  if (v==="accueil"){ bindGouvCommun(); bindDeleguesCommun(); bindActivite(); }
   ({delegues:bindDelegues, taches:bindTaches, decisions:bindDecisions, reunions:bindReunions, organigramme:bindOrganigramme, audit:bindAudit, suivi:bindSuivi, synthese:bindSynthese, catalogue:bindCatalogue, messages:bindMessages, consignes:bindConsignes, rapports:bindRapports, evaluations:bindEvaluations, classement:bindClassement}[v]||(()=>{}))();
   $("#main").querySelectorAll("[data-cons]").forEach(b => b.onclick = () => ficheConsigne(b.dataset.cons));
   if (!["suivi","synthese"].includes(v)){ $("#main").querySelectorAll("[data-rh]").forEach(b => b.onclick = e => { e.preventDefault(); ficheHebdo(b.dataset.rh); }); $("#main").querySelectorAll("[data-dos]").forEach(b => b.onclick = () => ficheDossier(b.dataset.dos)); $("#main").querySelectorAll("[data-syn]").forEach(b => b.onclick = () => ficheSynthese(b.dataset.syn)); }
@@ -3646,6 +3646,48 @@ function abonnerDelegues(){
   }
   if (voitNotesTut()) sub("notes_tuteurs","notesTuteurs", s => { S.notesTuteurs = rows(s); });
   else if (estDelegue()) sub("notes_tuteurs","notesTuteurs", s => { S.notesTuteurs = rows(s); }, db.collection("notes_tuteurs").where("delegueEmail","==",S.email));
+}
+
+/* =====================================================================
+   Activité de l'équipe (Présidence et Vice-présidence) : qui a fait quoi
+   ===================================================================== */
+const CAT_ACT = {resp:["Responsables",["secretaire","vicepresident","encaissement","caisse","tresorerie","formation","tuteurs","accompagnement","responsable"]], tut:["Tuteurs",["tuteur"]], del:["Délégués",["delegue"]], aut:["Autres",["pedagogie","membre"]]};
+const catDeRole = r => Object.keys(CAT_ACT).find(k=>CAT_ACT[k][1].includes(r)) || "aut";
+const heureFR = d => new Date(d).toLocaleString("fr-FR",{day:"numeric",month:"short",hour:"2-digit",minute:"2-digit"});
+function etatActivite(){
+  const f = S.act ||= {cat:"", per:7};
+  const depuis = f.per===1 ? today() : addJ(today(), -(f.per-1));
+  const J = S.journal.filter(j=>j.par!==S.uid && j.role!=="president" && String(j.le).slice(0,10) >= depuis && (!f.cat || catDeRole(j.role)===f.cat));
+  const gens = actifsTous().filter(c=>c.role!=="president" && c.em!==S.email && (!f.cat || rolesDe(c).some(r=>catDeRole(r)===f.cat)));
+  const par = new Map();
+  for (const j of J){ const p = par.get(j.par) || {uid:j.par, nom:j.parNom, role:j.role, n:0, der:j}; p.n++; if (j.le > p.der.le) p.der = j; par.set(j.par, p); }
+  const inactifs = gens.filter(c=>!c.uid || !par.has(c.uid));
+  return {f, J, gens, par:[...par.values()].sort((a,b)=>b.n-a.n), inactifs};
+}
+function blocActivite(){
+  try {
+    const E = etatActivite(), f = E.f;
+    return `<div class="card" id="actEq"><div class="spread"><h3>Activité de l'équipe</h3><a class="small" href="#admin" data-goto-journal>Journal complet</a></div>
+      <p class="small muted">Les actions de chacun dans l'application : responsables, tuteurs, délégués et autres membres.</p>
+      <div class="subtabs" role="group" aria-label="Catégorie">${[["","Tous"],...Object.entries(CAT_ACT).map(([k,v])=>[k,v[0]])].map(([k,l])=>`<button data-actc="${k}" aria-pressed="${f.cat===k}">${l}</button>`).join("")}</div>
+      <div class="subtabs" role="group" aria-label="Période">${[[1,"Aujourd'hui"],[7,"7 jours"],[30,"30 jours"]].map(([k,l])=>`<button data-actp="${k}" aria-pressed="${f.per===k}">${l}</button>`).join("")}</div>
+      <div class="kpis">${kpi(E.J.length,"actions")}${kpi(`${E.par.length} / ${E.gens.length}`,"personnes actives","g")}${kpi(E.inactifs.length,"sans aucune action",E.inactifs.length?"bad":"g")}</div>
+      ${E.par.length?`<h3>Par personne</h3>${E.par.map(p=>`<button class="citem" data-actu="${esc(p.uid)}"><span class="t">${esc(p.nom)} <span class="pill">${p.n} action${p.n>1?"s":""}</span></span><span class="m"><span>${esc(ROLES[p.role]?.l||"")}</span><span>· dernière : ${heureFR(p.der.le)}</span></span><span class="m"><span style="white-space:normal">${esc(p.der.texte)}</span></span></button>`).join("")}`:`<div class="empty">Aucune action sur cette période.</div>`}
+      ${E.inactifs.length?`<details><summary class="small"><b>Sans aucune action sur la période (${E.inactifs.length})</b></summary>${E.inactifs.map(c=>`<div class="prow"><span>${esc(c.nom)}<br><span class="small muted">${esc(ROLES[c.role]?.l||"")}</span></span><span class="pill ${c.uid?"warn":"bad"}">${c.uid ? (c.derniereConnexion ? "vu le "+new Date(c.derniereConnexion).toLocaleDateString("fr-FR",{day:"numeric",month:"short"}) : "connecté") : "Jamais connecté"}</span></div>`).join("")}</details>`:""}
+      ${E.J.length?`<details open><summary class="small"><b>Dernières actions</b></summary>${E.J.slice(0,15).map(j=>`<div class="prow"><span style="white-space:normal"><b>${esc(j.parNom)}</b> <span class="small muted">· ${esc(ROLES[j.role]?.l||"")} · ${heureFR(j.le)}</span><br><span class="small">${esc(j.texte)}</span></span></div>`).join("")}</details>`:""}
+      <p class="small muted">Calculé sur les ${S.journal.length} dernières actions enregistrées. « Vu le » indique la dernière connexion.</p></div>`;
+  } catch(e){ console.error(e); return ""; }
+}
+function bindActivite(){
+  const M = $("#main"), garder = () => { const y = scrollY; render(); scrollTo(0, y); };
+  M.querySelectorAll("[data-actc]").forEach(b => b.onclick = () => { S.act.cat = b.dataset.actc; garder(); });
+  M.querySelectorAll("[data-actp]").forEach(b => b.onclick = () => { S.act.per = Number(b.dataset.actp); garder(); });
+  M.querySelectorAll("[data-goto-journal]").forEach(a => a.addEventListener("click", () => { S.sub.admin = "journal"; }));
+  M.querySelectorAll("[data-actu]").forEach(b => b.onclick = () => {
+    const L = S.journal.filter(j=>j.par===b.dataset.actu); if (!L.length) return;
+    openSheet(`<div class="spread"><h2>${esc(L[0].parNom)}</h2><button class="btn ghost" data-close>Fermer</button></div><p class="small muted">${esc(ROLES[L[0].role]?.l||"")} · ${L.length} action(s) enregistrée(s)</p>
+      ${L.map(j=>`<div class="prow"><span style="white-space:normal"><span class="small muted">${heureFR(j.le)}</span><br>${esc(j.texte)}</span></div>`).join("")}`);
+  });
 }
 
 function sub(path, key, fn, q){
