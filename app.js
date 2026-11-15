@@ -77,6 +77,21 @@ const finMois = debut => { const d = parseD(debut); return isoD(new Date(d.getFu
 const normNom = s => String(s||"").normalize("NFD").replace(/[̀-ͯ]/g,"").toLowerCase().replace(/[^a-z0-9]+/g," ").trim();
 const valide = e => e && e.statut !== "Annulée" && e.statut !== "Annulé";
 
+/* Évaluations d'une formation : définies dans le catalogue ; à défaut, une seule « Note finale » (compatibilité) */
+const EVAL_DEFAUT = [{id:"final", libelle:"Note finale", type:"Examen", coef:1}];
+const evalsDe = f => (f?.evaluations||[]).length ? f.evaluations : EVAL_DEFAUT;
+/* Notes d'un document : nouvelle forme {evals:{id:{mat:v}}} ; ancienne forme {notes:{mat:v}} lue comme « Note finale » */
+const notesParEval = n => ({...(n?.notes && !n?.evals?.final ? {final:n.notes} : {}), ...(n?.evals||{})});
+/* ABS = absent non justifié, compte 0 ; EXC = excusé, n'entre pas dans la moyenne */
+function moyennePonderee(notes, evs){
+  let som = 0, coefs = 0, attendus = 0, saisis = 0;
+  for (const ev of evs){ const c = Number(ev.coef)||1; attendus++; const v = notes[ev.id]; if (v==null || v==="") continue; saisis++; if (v==="EXC") { attendus--; saisis--; continue; } som += (v==="ABS" ? 0 : Number(v))*c; coefs += c; }
+  return {moyenne: coefs ? Math.round(som/coefs*100)/100 : null, complet: attendus>0 && saisis>=attendus};
+}
+const MENTIONS = [[16,"Très bien"],[14,"Bien"],[12,"Assez bien"],[10,"Passable"]];
+const mentionDe = (m, min) => m==null ? "" : m < (min??10) ? "Ajourné" : (MENTIONS.find(([s])=>m>=s)||[0,"Passable"])[1];
+const n20 = v => v==null ? "—" : v==="ABS" ? "ABS" : v==="EXC" ? "Excusé" : String(Math.round(Number(v)*100)/100).replace(".",",");
+
 function calculer(D, ref){
   const P = {...PARAM_DEFAUT, ...(D.params||{})}; P.seuils = {...PARAM_DEFAUT.seuils, ...((D.params||{}).seuils||{})};
   const today = P.dateReference || ref;
@@ -153,32 +168,52 @@ function calculer(D, ref){
   ].sort((a,b)=>(a.date+a.ref).localeCompare(b.date+b.ref));
   let run = P.soldeOuverture||0; for (const m of mvts){ run += m.entree - m.sortie; m.solde = run; }
 
-  /* --- Pédagogie --- */
-  const forms = Object.fromEntries((P.formations||[]).map(f=>[f.code,f]));
+  /* --- Pédagogie : présences détaillées, notes par évaluation, moyenne pondérée, mention, rang, tutorat --- */
+  const catalogue = Object.fromEntries((D.formations||[]).map(f=>[f.code,f]));
   const peda = {};
-  for (const s of D.etudiants) peda[s.matricule] = {par:{}, pres:0, total:0};
+  for (const s of D.etudiants) peda[s.matricule] = {par:{}, pres:0, total:0, tut:{pres:0, total:0, liste:[]}};
+  const fiche = (mat, code) => (peda[mat].par[code] ||= {pres:0, total:0, c:{P:0,R:0,J:0,A:0}, note:null, notes:{}, moyenne:null, complet:false});
   for (const se of D.seances){
     for (const [mat,code] of Object.entries(se.presences||{})){
       if (!peda[mat] || !code) continue;
-      const f = (peda[mat].par[se.formation] ||= {pres:0,total:0,note:null});
-      f.total++; peda[mat].total++;
+      const f = fiche(mat, se.formation);
+      f.total++; peda[mat].total++; if (f.c[code]!=null) f.c[code]++;
       if (code==="P"||code==="R"){ f.pres++; peda[mat].pres++; }
     }
   }
-  for (const n of D.notes){
-    for (const [mat,v] of Object.entries(n.notes||{})){
-      if (!peda[mat] || v===""||v==null) continue;
-      (peda[mat].par[n.id] ||= {pres:0,total:0,note:null}).note = v;
+  for (const pt of (D.pointagesTut||[])){
+    for (const [mat,code] of Object.entries(pt.presences||{})){
+      if (!peda[mat] || !code) continue;
+      const t = peda[mat].tut; t.total++; if (code==="P"||code==="R") t.pres++;
+      t.liste.push({date:pt.date, titre:pt.titre||"", code, id:pt.id});
     }
+  }
+  for (const n of D.notes){
+    const evs = evalsDe(catalogue[n.id]), parEval = notesParEval(n);
+    for (const ev of evs) for (const [mat,v] of Object.entries(parEval[ev.id]||{})){
+      if (!peda[mat] || v===""||v==null) continue;
+      fiche(mat, n.id).notes[ev.id] = v;
+    }
+    for (const mat in peda){ const f = peda[mat].par[n.id]; if (!f || !Object.keys(f.notes).length) continue;
+      const m = moyennePonderee(f.notes, evs); f.moyenne = m.moyenne; f.complet = m.complet; f.note = m.moyenne; }
   }
   for (const mat in peda){
-    const p = peda[mat]; p.assiduite = p.total ? p.pres/p.total : null;
+    const p = peda[mat]; p.assiduite = p.total ? p.pres/p.total : null; p.tut.assiduite = p.tut.total ? p.tut.pres/p.tut.total : null;
+    p.tut.liste.sort((a,b)=>String(b.date).localeCompare(String(a.date)));
     for (const code in p.par){
       const f = p.par[code]; f.assiduite = f.total ? f.pres/f.total : null;
-      const noteOk = typeof f.note === "number" && f.note >= P.noteMin;
-      f.valide = f.note == null ? null : (noteOk && (f.assiduite == null || f.assiduite >= P.assiduiteMin));
+      f.mention = mentionDe(f.moyenne, P.noteMin);
+      const noteOk = typeof f.moyenne === "number" && f.moyenne >= P.noteMin;
+      /* résultat définitif seulement quand toutes les évaluations sont notées */
+      f.valide = f.moyenne == null || !f.complet ? null : (noteOk && (f.assiduite == null || f.assiduite >= P.assiduiteMin));
     }
+    const ms = Object.values(p.par).map(f=>f.moyenne).filter(v=>typeof v==="number");
+    p.moyenneGenerale = ms.length ? ms.reduce((a,b)=>a+b,0)/ms.length : null;
   }
+  /* rang par formation (ex aequo au même rang) */
+  const parForm = {};
+  for (const mat in peda) for (const [code,f] of Object.entries(peda[mat].par)) if (typeof f.moyenne==="number") (parForm[code] ||= []).push(f);
+  for (const L of Object.values(parForm)){ L.sort((a,b)=>b.moyenne-a.moyenne); L.forEach(f => { f.rang = L.findIndex(x=>x.moyenne===f.moyenne)+1; f.effectif = L.length; }); }
 
   /* --- Alertes --- */
   const A = [];
@@ -234,8 +269,8 @@ function confirmBtn(btn, label, fn){ btn.onclick = () => { if (btn.dataset.sure!
 /* ======== État ======== */
 const S = {
   db:null, fb:null, uid:null, email:null, moi:null, sansConfig:false, authPret:false, stale:false, jx:[], rapportsEquipe:[], demandesCours:[], rapportsDelegues:[], notesTuteurs:[], decisions:[], taches:[], reunions:[], audit:[],
-  etudiants:[], prive:{}, encaissements:[], depots:[], operations:[], seances:[], notes:[], params:null, comptes:{}, demandes:{}, journal:[], journalPub:[], journalFin:[], tut:[], T:null, etat:{}, tf:{tuteur:"", statut:"", spec:""},
-  loaded:{}, C:null, sub:{equipe:"", delegues:"demandes", caisse:"synthese", pedagogie:"seances", admin:"comptes", etudiants:""},
+  etudiants:[], prive:{}, encaissements:[], depots:[], operations:[], seances:[], notes:[], programme:[], pointagesTut:[], params:null, comptes:{}, demandes:{}, journal:[], journalPub:[], journalFin:[], tut:[], T:null, etat:{}, tf:{tuteur:"", statut:"", spec:""},
+  loaded:{}, C:null, pf:{types:["academie","tutorat","communaute","reunion"], vue:"semaine", ref:"", miens:false}, sub:{equipe:"", delegues:"demandes", caisse:"synthese", pedagogie:"seances", admin:"comptes", etudiants:""},
   f:{q:"", niveau:"", situation:"", spec:""}, rf:{q:"", nature:"", mois:"", statut:"valides"},
   firstJournal:true,
   consignes:[], evaluations:[], messages:[], formations:[], affectations:[], rapportsHebdo:[], dossiers:[], rapportsResp:[], syntheses:[], sf:{sem:"", st:""}, df:{st:"ouverts"}, cf2:{st:"", q:""}, editRH:null, mf:{onglet:"attente", type:""}, classements:[], cf:{statut:"", dest:""}, evalP:"", classP:"", rp:{type:"", mois:"", a:"", b:"", tut:""}
@@ -296,6 +331,7 @@ const R = (...l) => () => inclut(l, role()) || role()==="president";
 const RL = (...l) => () => inclut(l, role()) || role()==="president" || LECTURE_TOTALE.includes(role());
 const VIEWS = [
   {id:"accueil", l:"Tableau de bord", ok:()=>true},
+  {id:"programme", l:"Programme", ok:()=>true},
   {id:"consignes", l:"Consignes", ok:()=>true},
   {id:"delegues", l:"Délégués de spécialité", ok:()=>estDelegue() || supDelegues()},
   {id:"equipe", l:"Espace responsables", ok:()=>jeSuisEquipe() || gouvSup()},
@@ -349,7 +385,7 @@ async function marquerLu(){
 let rq=false;
 function queueRender(){ if (rq) return; rq=true; requestAnimationFrame(()=>{ rq=false; if (!$("#overlay").classList.contains("open")) render(); else majBadge(); }); }
 function recalc(){
-  S.C = calculer({params:S.params, etudiants:S.etudiants, encaissements:S.encaissements, depots:S.depots, operations:S.operations, seances:S.seances, notes:S.notes}, today());
+  S.C = calculer({params:S.params, etudiants:S.etudiants, encaissements:S.encaissements, depots:S.depots, operations:S.operations, seances:S.seances, notes:S.notes, formations:S.formations, pointagesTut:S.pointagesTut}, today());
   S.T = statsTutorat(S.tut, S.comptes, S.C.today);
   if (can("tut.voir")) S.C.alertes.push(...S.T.alertes.filter(a=>!/sans rapport depuis/.test(a.titre)));
   try { S.C.alertes.push(...alertesSuivi()); } catch(e){ console.error(e); }
@@ -387,12 +423,12 @@ function rendu(){
   navigation(VIEWS.filter(x=>x.ok()).map(x=>({id:x.id, l:x.id==="consignes"&&!lectureTotale()?"Mes consignes":lab(x), n:nb(x)})), v, principauxDe(role()));
   majBadge();
   if (v==="depots") S.sub.caisse = "depots";
-  main.innerHTML = (v==="accueil" ? heroAccueil() + anneaux() + (lectureTotale() ? blocActivite() : "") + blocGouv() + blocConsignes() : "") + (v==="accueil" ? blocEquipe() : "") + ({equipe:vEquipe, delegues:vDelegues, taches:vTaches, decisions:vDecisions, reunions:vReunions, organigramme:vOrganigramme, audit:vAudit, suivi:vSuivi, synthese:vSynthese, catalogue:vCatalogue, messages:vMessages, consignes:vConsignes, rapports:vRapports, evaluations:vEvaluations, classement:vClassement, accueil:vAccueil, etudiants:vEtudiants, registre:vRegistre, cotisations:vCotisations, caisse:vCaisse, depots:vCaisse, pedagogie:vPedagogie, tutorat:vTutorat, notifications:vNotifs, admin:vAdmin, compte:vCompte}[v])();
+  main.innerHTML = (v==="accueil" ? heroAccueil() + anneaux() + (lectureTotale() ? blocActivite() : "") + blocGouv() + blocConsignes() : "") + (v==="accueil" ? blocProgramme() + blocEquipe() : "") + ({programme:vProgramme, equipe:vEquipe, delegues:vDelegues, taches:vTaches, decisions:vDecisions, reunions:vReunions, organigramme:vOrganigramme, audit:vAudit, suivi:vSuivi, synthese:vSynthese, catalogue:vCatalogue, messages:vMessages, consignes:vConsignes, rapports:vRapports, evaluations:vEvaluations, classement:vClassement, accueil:vAccueil, etudiants:vEtudiants, registre:vRegistre, cotisations:vCotisations, caisse:vCaisse, depots:vCaisse, pedagogie:vPedagogie, tutorat:vTutorat, notifications:vNotifs, admin:vAdmin, compte:vCompte}[v])();
   bind(v==="depots" ? "caisse" : v);
   if (v==="compte") bindCompte();
   if (v==="notifications") marquerLu();
-  if (v==="accueil"){ bindGouvCommun(); bindDeleguesCommun(); bindActivite(); $("#main").querySelectorAll("[data-ego]").forEach(a => a.addEventListener("click", () => { S.sub.equipe = a.dataset.ego; })); }
-  ({equipe:bindEquipe, delegues:bindDelegues, taches:bindTaches, decisions:bindDecisions, reunions:bindReunions, organigramme:bindOrganigramme, audit:bindAudit, suivi:bindSuivi, synthese:bindSynthese, catalogue:bindCatalogue, messages:bindMessages, consignes:bindConsignes, rapports:bindRapports, evaluations:bindEvaluations, classement:bindClassement}[v]||(()=>{}))();
+  if (v==="accueil"){ bindEvs($("#main")); bindGouvCommun(); bindDeleguesCommun(); bindActivite(); $("#main").querySelectorAll("[data-ego]").forEach(a => a.addEventListener("click", () => { S.sub.equipe = a.dataset.ego; })); }
+  ({programme:bindProgramme, equipe:bindEquipe, delegues:bindDelegues, taches:bindTaches, decisions:bindDecisions, reunions:bindReunions, organigramme:bindOrganigramme, audit:bindAudit, suivi:bindSuivi, synthese:bindSynthese, catalogue:bindCatalogue, messages:bindMessages, consignes:bindConsignes, rapports:bindRapports, evaluations:bindEvaluations, classement:bindClassement}[v]||(()=>{}))();
   $("#main").querySelectorAll("[data-cons]").forEach(b => b.onclick = () => ficheConsigne(b.dataset.cons));
   if (!["suivi","synthese"].includes(v)){ $("#main").querySelectorAll("[data-rh]").forEach(b => b.onclick = e => { e.preventDefault(); ficheHebdo(b.dataset.rh); }); $("#main").querySelectorAll("[data-dos]").forEach(b => b.onclick = () => ficheDossier(b.dataset.dos)); $("#main").querySelectorAll("[data-syn]").forEach(b => b.onclick = () => ficheSynthese(b.dataset.syn)); }
   $("#main").querySelectorAll("[data-goto-sub]").forEach(a => a.addEventListener("click", () => { S.sub.synthese = a.dataset.gotoSub; }));
@@ -676,11 +712,11 @@ function ficheEtu(mat){
       <div class="plist">${moisCells}</div>
       <details><summary>Versements (${e.versements.length})</summary><div class="tablewrap"><table><tbody>${e.versements.map(v=>`<tr><td class="num">${esc(v.num)}</td><td>${dFR(v.date)}</td><td class="small">${esc(v.nature)}</td><td class="r">${F(v.montant)}</td><td class="small">${esc(v.mode)}</td></tr>`).join("")||'<tr><td>Aucun versement</td></tr>'}</tbody></table></div></details>
     </div>`:""}
-    ${can("peda.voir")||can("*")?`<div class="card"><h3>Suivi pédagogique</h3><p class="small">Assiduité globale : <b>${pct(p.assiduite)}</b> (${p.pres}/${p.total} séances)</p>
-      ${Object.keys(p.par).length?`<div class="tablewrap"><table><thead><tr><th>Formation</th><th class="r">Assiduité</th><th class="r">Note</th><th>Résultat</th></tr></thead><tbody>${Object.entries(p.par).map(([c,f])=>`<tr><td>${esc(c)} · <span class="small">${esc(nomForm(c))}</span></td><td class="r">${pct(f.assiduite)}</td><td class="r">${f.note==null?"—":esc(f.note)}</td><td>${f.valide==null?'<span class="pill mute">En cours</span>':f.valide?'<span class="pill ok">Validée</span>':'<span class="pill bad">Non validée</span>'}</td></tr>`).join("")}</tbody></table></div>`:`<div class="empty">Aucune séance ni note pour l'instant.</div>`}</div>`:""}
+    ${can("peda.voir")||can("*")||LECTURE_TOTALE.includes(role())?blocPedaEtu(mat):""}
     ${histoMessages(mat)}
     <div class="row">${can("enc.saisir")?`<button class="btn primary" id="fEnc">+ Encaissement</button>`:""}${can("etu.gerer")?`<button class="btn" id="fEdit">Modifier la fiche</button>`:""}${wa&&fin&&(e.arriere||e.resteCourant||!e.inscOk)?`<a class="btn vert" href="${wa}" target="_blank" rel="noopener">Relancer sur WhatsApp</a>`:""}<button class="btn" id="fPdf">PDF</button><button class="btn" data-close>Fermer</button></div>`);
   $("#fPdf").onclick = () => rptEtudiant(mat);
+  bindEvs($("#sheet"));
   $("#fMsg") && ($("#fMsg").onclick = () => formMessage(mat));
   $("#sheet").querySelectorAll("[data-fmenv]").forEach(b => b.onclick = () => { envoyerMsg(S.messages.find(x=>x.id===b.dataset.fmenv)); closeSheet(); });
   $("#fEnc") && ($("#fEnc").onclick = () => formEnc(mat));
@@ -1054,21 +1090,28 @@ function vPedagogie(){
     </tbody></table></div>`;
   }
   if (sub==="notes"){
-    const code = S.sub.noteForm || forms[0]?.code;
-    const L = apprenantsPour(code), ND = S.notes.find(n=>n.id===code), N = ND?.notes || {}, vst = ND?.validation?.statut || (ND ? "Soumises" : "");
-    const verrou = vst==="Validées";
-    const editN = edit && !verrou;
-    body = `<div class="row"><label class="f" for="nfo" style="min-width:260px">Formation<select id="nfo">${opts(forms.map(f=>[f.code,`${f.code} · ${f.intitule}`]), code)}</select></label>
+    const code = forms.some(f=>f.code===S.sub.noteForm) ? S.sub.noteForm : forms[0]?.code;
+    const FX = toutesFormations().find(f=>f.code===code), evs = evalsDe(FX);
+    const ev = evs.find(e=>e.id===S.sub.noteEval) || null;
+    const L = apprenantsPour(code), ND = S.notes.find(n=>n.id===code), PE = notesParEval(ND), vst = ND?.validation?.statut || (ND ? "Soumises" : "");
+    const verrou = vst==="Validées", editN = edit && !verrou && ev;
+    const sansEval = !(FX?.evaluations||[]).length;
+    body = `<div class="row"><label class="f" for="nfo" style="min-width:240px">Formation<select id="nfo">${opts(forms.map(f=>[f.code,`${f.code} · ${f.intitule}`]), code)}</select></label>
+    <label class="f" for="nev" style="min-width:200px">Affichage<select id="nev">${opts([["","Récapitulatif et moyennes"], ...evs.map(e=>[e.id, `Saisir : ${e.libelle} (coef. ${e.coef||1})`])], ev?.id||"")}</select></label>
     ${vst?`<span class="pill ${vst==="Validées"?"ok":vst==="Retournées"?"bad":"warn"}" title="${esc(ND?.validation?.obs||"")}">Notes ${esc(vst.toLowerCase())}</span>`:""}
     ${valide && ND && vst!=="Validées"?`<button class="btn sm vert" data-notev="${esc(code)}">Valider les notes</button><button class="btn sm" data-noter="${esc(code)}">Retourner</button>`:""}
     ${valide && vst==="Validées"?`<button class="btn sm" data-noteo="${esc(code)}">Rouvrir pour rectification</button>`:""}
     ${role()==="secretaire" && vst==="Validées"?`<button class="btn sm" data-notec="${esc(code)}">Contrôler</button>`:""}</div>
+    ${sansEval?`<div class="banner">Aucune évaluation définie pour cette formation : une seule « Note finale » est utilisée. ${gereCatalogue()?`Définissez devoirs, TP et examens avec leurs coefficients dans <a href="#catalogue">Catalogue › fiche de la formation</a>.`:"Le Responsable Formation ou la Présidence peut définir les évaluations dans le catalogue."}</div>`:""}
     ${vst==="Retournées"?`<div class="banner">Retournées par ${esc(ND.validation.par||"")} : ${esc(ND.validation.obs||"")}</div>`:""}
     ${verrou?`<p class="small muted">Notes validées le ${new Date(ND.validation.le).toLocaleDateString("fr-FR")} par ${esc(ND.validation.par)} : elles ne se modifient plus, sauf réouverture pour rectification.</p>`:""}
-    <p class="small muted">Note sur 20 (décimales autorisées) ou ABS pour un absent à l'évaluation. Validation : note ≥ ${P().noteMin} et assiduité ≥ ${pct(P().assiduiteMin)}.</p>
-    <div class="tablewrap"><table><thead><tr><th>Matricule</th><th>Nom</th><th class="r">Assiduité</th><th>Note /20</th><th>Résultat</th></tr></thead><tbody>
-    ${L.map(s=>{ const f = C.peda[s.matricule].par[code]||{}; const v = N[s.matricule]; return `<tr><td class="num">${esc(s.matricule)}</td><td>${esc(s.nom)}</td><td class="r">${pct(f.assiduite)}</td><td style="width:120px">${editN?`<input type="text" inputmode="decimal" class="noteIn" data-mat="${esc(s.matricule)}" value="${v==null?"":esc(String(v).replace(".",","))}" aria-label="Note de ${esc(s.nom)}" style="min-height:32px;padding:4px 8px">`:esc(v??"—")}</td><td>${f.valide==null?'<span class="pill mute">—</span>':f.valide?'<span class="pill ok">Validée</span>':'<span class="pill bad">Non validée</span>'}</td></tr>`; }).join("") || `<tr><td colspan="5"><div class="empty">Aucun apprenant pour ce niveau.</div></td></tr>`}
-    </tbody></table></div>${editN&&L.length?`<div class="row"><button class="btn primary" id="saveNotes">Soumettre les notes</button></div>`:""}
+    <p class="small muted">Notes sur 20 · ABS = absent non justifié (compte 0) · EXC = excusé (hors moyenne). Moyenne pondérée par les coefficients. Formation validée si moyenne ≥ ${P().noteMin} et assiduité ≥ ${pct(P().assiduiteMin)}.</p>
+    ${ev ? `<div class="tablewrap"><table><thead><tr><th>Matricule</th><th>Nom</th><th class="r">Assiduité</th><th>${esc(ev.libelle)} /20</th></tr></thead><tbody>
+      ${L.map(s=>{ const f = C.peda[s.matricule].par[code]||{}; const v = (PE[ev.id]||{})[s.matricule]; return `<tr><td class="num">${esc(s.matricule)}</td><td>${esc(s.nom)}</td><td class="r">${pct(f.assiduite)}</td><td style="width:130px">${editN?`<input type="text" inputmode="decimal" class="noteIn" data-mat="${esc(s.matricule)}" value="${v==null?"":esc(String(v).replace(".",","))}" aria-label="Note de ${esc(s.nom)}" style="min-height:32px;padding:4px 8px">`:esc(n20(v))}</td></tr>`; }).join("") || `<tr><td colspan="4"><div class="empty">Aucun apprenant pour ce niveau.</div></td></tr>`}
+      </tbody></table></div>${editN&&L.length?`<div class="row"><button class="btn primary" id="saveNotes">Soumettre les notes « ${esc(ev.libelle)} »</button></div>`:""}`
+    : `<div class="tablewrap"><table><thead><tr><th>Nom</th><th class="r">Séances</th><th class="r">Assid.</th>${evs.map(e=>`<th class="r" title="${esc(e.type||"")}">${esc(e.libelle)}<br><span class="small muted">coef. ${esc(e.coef||1)}</span></th>`).join("")}<th class="r">Moyenne</th><th>Mention</th><th class="r">Rang</th><th>Résultat</th></tr></thead><tbody>
+      ${L.map(s=>{ const f = C.peda[s.matricule].par[code]||{}; return `<tr class="click" data-mat="${esc(s.matricule)}"><td><b>${esc(s.nom)}</b><br><span class="small muted num">${esc(s.matricule)}</span></td><td class="r">${f.pres||0}/${f.total||0}</td><td class="r">${pct(f.assiduite)}</td>${evs.map(e=>`<td class="r">${esc(n20((PE[e.id]||{})[s.matricule]))}</td>`).join("")}<td class="r"><b>${esc(n20(f.moyenne))}</b>${f.moyenne!=null&&!f.complet?'<br><span class="small muted">provisoire</span>':""}</td><td class="small">${esc(f.mention||"—")}</td><td class="r">${f.rang?`${f.rang}/${f.effectif}`:"—"}</td><td>${f.valide==null?'<span class="pill mute">En cours</span>':f.valide?'<span class="pill ok">Validée</span>':'<span class="pill bad">Non validée</span>'}</td></tr>`; }).join("") || `<tr><td colspan="${evs.length+7}"><div class="empty">Aucun apprenant pour ce niveau.</div></td></tr>`}
+      </tbody></table></div>${edit&&!verrou?`<p class="small muted">Pour saisir, choisissez une évaluation dans « Affichage ».</p>`:""}`}
     ${ND?.historique?.length?`<details class="card"><summary>Historique des notes (${ND.historique.length})</summary>${histoHTML(ND.historique)}</details>`:""}`;
   }
   if (sub==="assiduite"){
@@ -1079,8 +1122,8 @@ function vPedagogie(){
   }
   return `<h2>Suivi pédagogique · CVPB Académie</h2><div class="subtabs" role="group" aria-label="Sections pédagogiques">${[["seances","Présences"],["notes","Notes"],["assiduite","Assiduité et résultats"]].map(([k,l])=>`<button data-sub="${k}" aria-pressed="${sub===k}">${l}</button>`).join("")}</div>${body}`;
 }
-function formSeance(id){
-  const se = id ? S.seances.find(x=>x.id===id) : {date:today(), formation:mesFormations()[0]?.code, presences:{}};
+function formSeance(id, pre){
+  const se = id ? S.seances.find(x=>x.id===id) : {date:pre?.date||today(), formation:pre?.formation||mesFormations()[0]?.code, presences:{}, programme:pre?.programme||""};
   const pr = {...(se.presences||{})};
   const draw = () => {
     const L = apprenantsPour($("#s_f").value);
@@ -1099,22 +1142,24 @@ function formSeance(id){
     const mats = new Set(apprenantsPour($("#s_f").value).map(s=>s.matricule));
     const presences = Object.fromEntries(Object.entries(pr).filter(([k,v])=>v && mats.has(k)));
     if (!Object.keys(presences).length){ toast("Pointez au moins un apprenant."); return; }
-    const data = {date:$("#s_d").value, formation:$("#s_f").value, presences, par:id ? (se.par||S.uid) : S.uid, parNom:id ? (se.parNom||compte().nom) : compte().nom, majLe:nowISO(), validation:{statut:"Soumise"}, historique: ajoute(se.historique, trace(id ? (se.validation?.statut==="Retournée" ? "Séance corrigée et soumise à nouveau" : "Séance modifiée") : "Séance pointée", "Soumise"))};
+    const data = {date:$("#s_d").value, formation:$("#s_f").value, presences, programme:se.programme||"", par:id ? (se.par||S.uid) : S.uid, parNom:id ? (se.parNom||compte().nom) : compte().nom, majLe:nowISO(), validation:{statut:"Soumise"}, historique: ajoute(se.historique, trace(id ? (se.validation?.statut==="Retournée" ? "Séance corrigée et soumise à nouveau" : "Séance modifiée") : "Séance pointée", "Soumise"))};
     const ref = id ? S.db.doc("seances/"+id) : S.db.collection("seances").doc();
-    if (await write(()=>ref.set(data), "Présences enregistrées")){ const v=Object.values(presences); log("seance", `Séance ${data.formation} du ${dFR(data.date)} : ${v.filter(x=>x==="P"||x==="R").length}/${v.length} présents`, ["president","bureau"]);
+    if (await write(()=>ref.set(data), "Présences enregistrées")){ const v=Object.values(presences);
+      if (data.programme){ const ev = S.programme.find(x=>x.id===data.programme); if (ev) S.db.doc("programme/"+ev.id).update({statut:"Tenue", seanceId:ref.id, pointeLe:nowISO(), pointePar:compte().nom, historique:ajoute(ev.historique, trace("Séance pointée", "Tenue"))}).catch(()=>{}); } log("seance", `Séance ${data.formation} du ${dFR(data.date)} : ${v.filter(x=>x==="P"||x==="R").length}/${v.length} présents`, ["president","bureau"]);
       const abs = Object.entries(presences).filter(([,x])=>x==="A").map(([k])=>({matricule:k, ref:ref.id}));
       if (abs.length) preparerMessages("absence", abs).then(L => L.length && toast(`${L.length} message(s) d'absence préparé(s) dans « WhatsApp étudiants »`)); closeSheet(); }
   };
 }
-async function saveNotes(code){
-  const cur = {...(S.notes.find(n=>n.id===code)?.notes||{})}; let bad = 0;
-  document.querySelectorAll(".noteIn").forEach(i => { const raw = i.value.trim().toUpperCase().replace(",","."); if (raw===""){ delete cur[i.dataset.mat]; return; } if (raw==="ABS"){ cur[i.dataset.mat]="ABS"; return; } const n = Number(raw); if (isNaN(n)||n<0||n>20){ bad++; i.style.borderColor="var(--bad)"; return; } cur[i.dataset.mat] = n; });
-  if (bad){ toast(`${bad} note(s) invalide(s) : saisissez un nombre entre 0 et 20 ou ABS.`); return; }
-  const avant = S.notes.find(n=>n.id===code)?.notes || {};
+async function saveNotes(code, evId){
+  const FX = toutesFormations().find(f=>f.code===code), ev = evalsDe(FX).find(e=>e.id===evId); if (!ev) return toast("Choisissez l'évaluation à saisir.");
   const ND = S.notes.find(n=>n.id===code);
   if (ND?.validation?.statut==="Validées") return toast("Ces notes sont validées : demandez au Responsable Formation de les rouvrir pour rectification.");
-  const nb = Object.keys(cur).filter(k=>String(avant[k])!==String(cur[k])).length;
-  if (await write(()=>S.db.doc("notes/"+code).set({notes:cur, majLe:nowISO(), par:S.uid, parNom:compte().nom, validation:{statut:"Soumises"}, historique: ajoute(ND?.historique, trace(ND?.validation?.statut==="Retournées" ? `Notes corrigées et soumises à nouveau (${nb} modification(s))` : `Notes soumises (${nb} modification(s))`, "Soumises"))}), "Notes soumises au Responsable Formation")) log("notes", `Notes ${code} soumises pour validation (${Object.keys(cur).length} apprenants)`, ["formation"]);
+  const PE = notesParEval(ND), avant = PE[ev.id] || {}, cur = {...avant}; let bad = 0;
+  document.querySelectorAll(".noteIn").forEach(i => { const raw = i.value.trim().toUpperCase().replace(",","."); if (raw===""){ delete cur[i.dataset.mat]; return; } if (raw==="ABS"||raw==="EXC"){ cur[i.dataset.mat]=raw; return; } const n = Number(raw); if (isNaN(n)||n<0||n>20){ bad++; i.style.borderColor="var(--bad)"; return; } cur[i.dataset.mat] = n; });
+  if (bad){ toast(`${bad} note(s) invalide(s) : un nombre entre 0 et 20, ABS ou EXC.`); return; }
+  const nb = new Set([...Object.keys(cur), ...Object.keys(avant)].filter(k=>String(avant[k])!==String(cur[k]))).size;
+  const evals = {...PE, [ev.id]: cur};
+  if (await write(()=>S.db.doc("notes/"+code).set({evals, majLe:nowISO(), par:S.uid, parNom:compte().nom, validation:{statut:"Soumises"}, historique: ajoute(ND?.historique, trace(`${ev.libelle} : ${ND?.validation?.statut==="Retournées" ? "notes corrigées et soumises à nouveau" : "notes soumises"} (${nb} modification(s))`, "Soumises"))}), "Notes soumises au Responsable Formation")) log("notes", `Notes ${code} · ${ev.libelle} soumises pour validation (${Object.keys(cur).length} apprenants)`, ["formation"]);
 }
 
 /* ---- Rapports de tutorat : vue Présidence / Commission Formation ---- */
@@ -1182,12 +1227,13 @@ function ficheRapport(doc, id){
 }
 
 /* ---- Espace Tuteurs ---- */
-const TVIEWS = [{id:"t-accueil", l:"Mon tableau de bord"},{id:"t-hebdo", l:"Rapport de la semaine"},{id:"t-rapports", l:"Mes rapports"},{id:"t-etudiants", l:"Mes étudiants"},{id:"t-consignes", l:"Consignes"},{id:"t-delegues", l:"Délégués de mon groupe"},{id:"t-taches", l:"Tâches"},{id:"t-reunions", l:"Réunions"},{id:"t-organigramme", l:"Organigramme"},{id:"t-classement", l:"Classement"},{id:"t-notifs", l:"Notifications"},{id:"t-compte", l:"Mon compte"}];
+const TVIEWS = [{id:"t-accueil", l:"Mon tableau de bord"},{id:"t-programme", l:"Programme"},{id:"t-hebdo", l:"Rapport de la semaine"},{id:"t-rapports", l:"Mes rapports"},{id:"t-etudiants", l:"Mes étudiants"},{id:"t-consignes", l:"Consignes"},{id:"t-delegues", l:"Délégués de mon groupe"},{id:"t-taches", l:"Tâches"},{id:"t-reunions", l:"Réunions"},{id:"t-organigramme", l:"Organigramme"},{id:"t-classement", l:"Classement"},{id:"t-notifs", l:"Notifications"},{id:"t-compte", l:"Mon compte"}];
 function tview(){ const h = location.hash.slice(1); return TVIEWS.some(v=>v.id===h) ? h : "t-accueil"; }
 const mesRapports = () => S.T.rapports.filter(r=>r.doc===S.uid);
 function renderTuteur(main){
   const v = tview();
   navigation(TVIEWS.map(x=>({id:x.id, l:x.l, n:x.id==="t-delegues"?S.rapportsDelegues.filter(r=>r.statut==="Soumis" && mesVisas(r).some(k=>!r.visas?.[k])).length:x.id==="t-notifs"?nonLues().length:x.id==="t-consignes"?consignesNonLues():0})), v, principauxDe("tuteur"));
+  if (v==="t-programme"){ main.innerHTML = vProgramme(); bindProgramme(); return; }
   if (v==="t-consignes"){ main.innerHTML = vConsignes(); bindConsignes(); return; }
   if (v==="t-delegues"){ main.innerHTML = vDelegues(); bindDelegues(); return; }
   if (v==="t-taches"){ main.innerHTML = vTaches(); bindTaches(); return; }
@@ -1197,7 +1243,7 @@ function renderTuteur(main){
   if (v==="t-hebdo"){ const r = S.editRH ? rhDe(S.email, S.editRH) : null; S.editRH = null; main.innerHTML = formHebdoHTML(r && ["Brouillon","Retourné"].includes(r.statut) ? r : null); bindFormHebdo(r && ["Brouillon","Retourné"].includes(r.statut) ? r : null); return; }
   if (v==="t-rapports"){ main.innerHTML = vTuteurHebdoListe(); main.querySelectorAll("[data-rh]").forEach(b => b.onclick = () => ficheHebdo(b.dataset.rh)); return; }
   if (v==="t-etudiants"){ main.innerHTML = vTuteurEtudiants(); return; }
-  if (v==="t-accueil"){ main.innerHTML = vTuteurAccueil(); main.querySelectorAll("[data-rh]").forEach(b => b.onclick = () => ficheHebdo(b.dataset.rh)); main.querySelectorAll("[data-cons]").forEach(b => b.onclick = () => ficheConsigne(b.dataset.cons)); return; }
+  if (v==="t-accueil"){ main.innerHTML = vTuteurAccueil() + blocProgramme(); bindEvs(main); main.querySelectorAll("[data-rh]").forEach(b => b.onclick = () => ficheHebdo(b.dataset.rh)); main.querySelectorAll("[data-cons]").forEach(b => b.onclick = () => ficheConsigne(b.dataset.cons)); return; }
   if (v==="t-notifs"){ main.innerHTML = `<h2>Notifications</h2><div class="card">${feedHTML(mesNotifs(),60)}</div>`; marquerLu(); return; }
   if (v==="t-compte"){ main.innerHTML = vCompte(); bindCompte(); return; }
   const L = mesRapports(), c = compte();
@@ -1521,8 +1567,9 @@ function bind(v){
   if (v==="pedagogie"){
     on("#newSea","onclick",()=>formSeance());
     main.querySelectorAll("[data-sea]").forEach(b=>b.onclick=()=>formSeance(b.dataset.sea));
-    on("#nfo","onchange",e=>{S.sub.noteForm=e.target.value;render();});
-    on("#saveNotes","onclick",()=>saveNotes($("#nfo").value));
+    on("#nfo","onchange",e=>{S.sub.noteForm=e.target.value;S.sub.noteEval="";render();});
+    on("#saveNotes","onclick",()=>saveNotes($("#nfo").value, $("#nev").value));
+    on("#nev","onchange",e=>{S.sub.noteEval=e.target.value;render();});
   }
   if (v==="admin"){
     on("#newCpt","onclick",()=>formCompte());
@@ -1581,6 +1628,7 @@ const ICO = (() => {
     menu: s('<rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="3" width="7" height="7" rx="1.5"/><rect x="3" y="14" width="7" height="7" rx="1.5"/><rect x="14" y="14" width="7" height="7" rx="1.5"/>')
   };
 })();
+ICO.programme = ICO.hebdo;
 const icoDe = id => ICO[String(id).replace(/^t-/,"")] || ICO[{nouveau:"nouveau", rapports:"registre", notifs:"notifications"}[String(id).replace(/^t-/,"")]] || ICO.menu;
 function initiales(n){ return String(n||"?").trim().split(/\s+/).slice(0,2).map(x=>x[0]||"").join("").toUpperCase(); }
 
@@ -1589,7 +1637,7 @@ function navigation(items, courant, principaux){
   $("#tabs").innerHTML = items.map(x=>`<a href="#${x.id}" ${x.id===courant?'aria-current="page"':""}>${esc(x.l)}${x.n?` (${x.n})`:""}</a>`).join("");
   const bn = $("#bnav"); bn.hidden = false;
   const pr = principaux.map(id=>items.find(x=>x.id===id)).filter(Boolean).slice(0,4);
-  const court = l => ({"Tableau de bord":"Accueil","Tableau général":"Accueil","Mon espace":"Accueil","Mon tableau de bord":"Accueil","Alertes et notifications":"Alertes","Notifications":"Alertes","Registre des encaissements":"Registre","Suivi des cotisations":"Cotisations","Suivi pédagogique":"Pédagogie","Rapports des tuteurs":"Tutorat","Mes consignes":"Consignes","Nouveau rapport":"Rapport","Mes rapports":"Rapports","Mes dépôts à la caisse":"Dépôts","WhatsApp étudiants":"WhatsApp","Suivi des étudiants":"Suivi","Synthèses et rapports":"Synthèses","Catalogue des formations":"Catalogue","Rapport de la semaine":"Rapport","Mes étudiants":"Étudiants","Journal d'audit":"Audit","Délégués de spécialité":"Délégués","Espace responsables":"Équipe"}[l] || l);
+  const court = l => ({"Tableau de bord":"Accueil","Tableau général":"Accueil","Mon espace":"Accueil","Mon tableau de bord":"Accueil","Alertes et notifications":"Alertes","Notifications":"Alertes","Registre des encaissements":"Registre","Suivi des cotisations":"Cotisations","Suivi pédagogique":"Pédagogie","Rapports des tuteurs":"Tutorat","Mes consignes":"Consignes","Nouveau rapport":"Rapport","Mes rapports":"Rapports","Mes dépôts à la caisse":"Dépôts","WhatsApp étudiants":"WhatsApp","Suivi des étudiants":"Suivi","Synthèses et rapports":"Synthèses","Catalogue des formations":"Catalogue","Rapport de la semaine":"Rapport","Mes étudiants":"Étudiants","Journal d'audit":"Audit","Délégués de spécialité":"Délégués","Espace responsables":"Équipe","Programme":"Programme"}[l] || l);
   const lien = x => `<a href="#${x.id}" ${x.id===courant?'aria-current="page"':""}>${icoDe(x.id)}<span>${esc(court(x.l))}</span>${x.n?`<b class="nb">${x.n>99?"99+":x.n}</b>`:""}</a>`;
   const p3 = pr.slice(0,3);
   bn.innerHTML = p3.slice(0,2).map(lien).join("") + `<button type="button" class="fab" id="bFab" aria-label="Actions rapides">${ICO.nouveau}</button>` + (p3[2] ? lien(p3[2]) : "<span></span>")
@@ -1605,13 +1653,13 @@ function navigation(items, courant, principaux){
 }
 function principauxDe(r){
   return ({
-    president:["accueil","synthese","consignes","caisse"], vicepresident:["accueil","synthese","suivi","notifications"], tuteurs:["accueil","suivi","consignes","notifications"], accompagnement:["accueil","suivi","messages","consignes"],
+    president:["accueil","synthese","consignes","caisse"], vicepresident:["accueil","synthese","suivi","notifications"], tuteurs:["accueil","programme","suivi","notifications"], accompagnement:["accueil","suivi","messages","consignes"],
     encaissement:["accueil","registre","messages","consignes"], caisse:["accueil","caisse","messages","consignes"],
-    tresorerie:["accueil","consignes","cotisations","notifications"], formation:["accueil","catalogue","pedagogie","consignes"],
-    pedagogie:["accueil","pedagogie","catalogue","messages"], secretaire:["accueil","suivi","synthese","consignes"],
-    tuteur:["t-accueil","t-hebdo","t-rapports","t-consignes"],
-    delegue:["accueil","delegues","taches","consignes"],
-    responsable:["accueil","taches","equipe","reunions"], membre:["accueil","taches","equipe","reunions"]
+    tresorerie:["accueil","consignes","cotisations","notifications"], formation:["accueil","programme","pedagogie","catalogue"],
+    pedagogie:["accueil","programme","pedagogie","messages"], secretaire:["accueil","suivi","synthese","consignes"],
+    tuteur:["t-accueil","t-programme","t-hebdo","t-consignes"],
+    delegue:["accueil","delegues","programme","consignes"],
+    responsable:["accueil","programme","taches","equipe"], membre:["accueil","programme","taches","equipe"]
   })[r] || ["accueil","taches","consignes","notifications"];
 }
 
@@ -1921,8 +1969,10 @@ function rptEtudiant(mat){
     ${fin?`<h2>2. Situation financière</h2>${KP([[FC(e.inscPayee),`inscription payée / ${F(P().inscription)}`],[FC(e.totalVerse),"total versé"],[FC(e.arriere),"arriéré"],[e.situation,"situation"]])}
     ${T_(["Mois","#Versé"], C.mois.map(m=>[m.libelle, F(e.parMois[m.code]||0)]))}
     <h3>Versements</h3>${T_(["N°","Date","Nature","Mode","#Montant"], e.versements.map(v=>[v.num,dFR(v.date),v.nature,v.mode,F(v.montant)]))}`:""}
-    <h2>${fin?3:2}. Suivi pédagogique</h2><p>Assiduité globale : <b>${pct(p.assiduite)}</b> (${p.pres}/${p.total} séances)</p>
-    ${T_(["Formation","#Assiduité","#Note","Résultat"], Object.entries(p.par).map(([c,x])=>[`${c} · ${nomForm(c)}`,pct(x.assiduite),x.note,x.valide==null?"En cours":x.valide?"Validée":"Non validée"]), "Aucune séance ni note.")}`, `CVPB_fiche_${s.matricule}`);
+    <h2>${fin?3:2}. Suivi pédagogique · CVPB Académie</h2>${KP([[`${p.pres}/${p.total}`,"séances Académie suivies"],[pct(p.assiduite),"assiduité"],[`${p.tut.pres}/${p.tut.total}`,"séances de tutorat"],[p.moyenneGenerale==null?"—":n20(p.moyenneGenerale)+" /20","moyenne générale"]])}
+    ${T_(["Formation","#Séances","#Assiduité","#Moyenne /20","Mention","#Rang","Résultat"], Object.entries(p.par).map(([c,x])=>[`${c} · ${nomForm(c)}`,`${x.pres}/${x.total}`,pct(x.assiduite),n20(x.moyenne)+(x.moyenne!=null&&!x.complet?" (prov.)":""),x.mention||"—",x.rang?`${x.rang}/${x.effectif}`:"—",x.valide==null?"En cours":x.valide?"Validée":"Non validée"]), "Aucune séance ni note.")}
+    ${Object.entries(p.par).filter(([,x])=>Object.keys(x.notes||{}).length).map(([c,x])=>{ const evs = evalsDe(toutesFormations().find(f=>f.code===c)); return `<h3>Détail des notes · ${esc(c)}</h3>${T_(["Évaluation","Type","#Coef.","#Note /20"], evs.map(e=>[e.libelle, e.type||"", e.coef||1, n20(x.notes[e.id])]))}`; }).join("")}
+    ${SIG("Le Responsable Formation","Le Président")}`, `CVPB_fiche_${s.matricule}`);
 }
 function rptFicheEval(em, p){
   const c = S.comptes[em] || {nom:em, role:""}; const a = scoreAuto(em, c, p), ev = evalDe(em, p), m = scoreManuel(ev), t = scoreTotal(a.v, m);
@@ -2505,7 +2555,7 @@ function formAffectation(em){
 /* ---------- Catalogue des formations (gouvernance) ---------- */
 const STATUTS_FORM = ["Brouillon","Ouverte","En cours","Suspendue","Clôturée","Archivée"];
 const pillForm = st => `<span class="pill ${st==="Suspendue"?"warn":st==="Clôturée"||st==="Archivée"?"mute":st==="Brouillon"?"mute":"ok"}">${esc(st||"Ouverte")}</span>`;
-const gereCatalogue = () => role()==="formation";
+const gereCatalogue = () => role()==="formation" || presidence();
 const formationsVues = () => role()==="pedagogie" ? S.formations.filter(f=>(f.formateurs||[]).includes(S.email)) : S.formations;
 /* Formations utilisables pour le pointage et les notes */
 function mesFormations(){
@@ -2573,12 +2623,29 @@ function ficheFormation(code){
     ${x.description?`<div class="quote">${esc(x.description)}</div>`:""}
     <div class="card"><div class="spread"><h3>Formateurs</h3>${gere?`<button class="btn sm" id="ffo">Affecter</button>`:""}</div>${(x.formateurs||[]).length?`<div class="plist">${x.formateurs.map(em=>`<div class="prow"><span>${esc(S.comptes[em]?.nom||em)}</span><span class="small muted">${esc(em)}</span></div>`).join("")}</div>`:`<div class="empty">Aucun formateur affecté : le pointage est impossible.</div>`}</div>
     <div class="card"><div class="spread"><h3>Modules (${mods.length})</h3>${gere?`<button class="btn sm" id="fmo">Ajouter un module</button>`:""}</div>${mods.length?`<div class="plist">${mods.map((m,i)=>`<div class="prow"><span><b class="small">${i+1}. ${esc(m.titre)}</b><br><span class="small muted">${m.duree?esc(m.duree)+" · ":""}${esc(m.objectifs||"")}</span></span>${gere?`<span class="row"><button class="btn sm ghost" data-mup="${i}" ${i?"":"disabled"} aria-label="Monter">↑</button><button class="btn sm ghost" data-mdel="${i}" aria-label="Retirer">✕</button></span>`:""}</div>`).join("")}</div>`:`<div class="empty">Aucun module défini.</div>`}</div>
+    <div class="card"><div class="spread"><h3>Évaluations et coefficients</h3>${gere?`<button class="btn sm" id="fev">Ajouter une évaluation</button>`:""}</div>${(x.evaluations||[]).length?`<div class="plist">${x.evaluations.map((e,i)=>`<div class="prow"><span><b class="small">${esc(e.libelle)}</b> <span class="pill mute">${esc(e.type||"")}</span><br><span class="small muted">Coefficient ${esc(e.coef||1)}${e.date?` · prévue le ${dFR(e.date)}`:""}</span></span>${gere?`<span class="row"><button class="btn sm ghost" data-eved="${i}">Modifier</button><button class="btn sm ghost" data-evdel="${i}" aria-label="Retirer">✕</button></span>`:""}</div>`).join("")}</div><p class="small muted">Somme des coefficients : ${x.evaluations.reduce((a,e)=>a+(Number(e.coef)||1),0)}</p>`:`<div class="empty">Aucune évaluation définie : une seule « Note finale » sera utilisée.</div>`}</div>
     <div class="card"><h3>Apprenants (${apps.length}) · séances (${sea.length})</h3>${apps.length?`<p class="small">${apps.slice(0,40).map(s=>esc(s.nom)).join(", ")}${apps.length>40?"…":""}</p>`:`<div class="empty">Aucun apprenant pour ce niveau.</div>`}</div>
     ${gere||sg?`<label class="f" for="fx_o">${sg?"Observation de contrôle":"Motif (enregistré dans l'historique)"}<textarea id="fx_o" maxlength="800"></textarea></label>`:""}
     <div class="row">${gere?`<button class="btn" id="fed">Modifier</button>${transitions.map(t=>`<button class="btn ${t==="Suspendue"||t==="Archivée"?"danger":t==="Clôturée"?"":"vert"}" data-ft="${t}">${libT[t]}</button>`).join("")}`:""}${sg?`<button class="btn vert" id="fctl">Contrôle administratif</button>`:""}<button class="btn ghost" data-close>Fermer</button></div>
     <details class="card"><summary>Historique (${(x.historique||[]).length})</summary>${histoHTML(x.historique)}</details>`);
   const obs = () => ($("#fx_o")?.value||"").trim();
   const maj = async (data, msg, action, statut, pour) => { if (await write(()=>S.db.doc("formations/"+code).update({...data, majLe:nowISO(), historique: ajoute(x.historique, trace(action, statut||st, obs()))}), msg)){ log("catalogue", `${x.code} : ${action}`, pour||["secretaire"]); closeSheet(); } };
+  const formEval = i => { const e = i==null ? {type:"Devoir", coef:1} : x.evaluations[i];
+    openSheet(`<h2>${i==null?"Nouvelle évaluation":"Modifier l'évaluation"} · ${esc(code)}</h2><form id="fe" class="form"><label class="f" for="e_l">Intitulé<input type="text" id="e_l" maxlength="60" value="${esc(e.libelle||"")}" placeholder="Ex. : Devoir 1, TP Excel, Examen final"></label>
+      <div class="g2"><label class="f" for="e_t">Type<select id="e_t">${opts(["Devoir","Interrogation","Travaux pratiques","Projet","Exposé","Examen"], e.type)}</select></label><label class="f" for="e_c">Coefficient<input type="number" id="e_c" min="0.5" max="10" step="0.5" value="${esc(e.coef||1)}"></label></div>
+      <label class="f" for="e_d">Date prévue (facultatif)<input type="date" id="e_d" value="${esc(e.date||"")}"></label>
+      <div class="row"><button class="btn primary" type="submit">Enregistrer</button><button class="btn ghost" type="button" data-close>Annuler</button></div></form>`);
+    $("#fe").onsubmit = async ev => { ev.preventDefault(); const libelle = $("#e_l").value.trim(), coef = Number($("#e_c").value);
+      if (libelle.length<2) return toast("Indiquez l'intitulé."); if (!(coef>0 && coef<=10)) return toast("Coefficient entre 0,5 et 10.");
+      const L = (x.evaluations||[]).slice(), n = {id: e.id || "EV"+Date.now().toString(36), libelle, type:$("#e_t").value, coef, date:$("#e_d").value||""};
+      if (i==null) L.push(n); else L[i] = n;
+      if (await write(()=>S.db.doc("formations/"+code).update({evaluations:L, majLe:nowISO(), historique: ajoute(x.historique, trace(`${i==null?"Évaluation ajoutée":"Évaluation modifiée"} : ${libelle} (coef. ${coef})`, st))}), "Évaluation enregistrée")){ log("catalogue", `${code} : évaluation ${libelle} (coef. ${coef})`, ["secretaire","pedagogie"]); closeSheet(); setTimeout(()=>ficheFormation(code), 400); } };
+  };
+  $("#fev") && ($("#fev").onclick = () => formEval(null));
+  $("#sheet").querySelectorAll("[data-eved]").forEach(b => b.onclick = () => formEval(Number(b.dataset.eved)));
+  $("#sheet").querySelectorAll("[data-evdel]").forEach(b => confirmBtn(b, "Retirer ?", () => { const i = Number(b.dataset.evdel), e = x.evaluations[i];
+    const dejà = Object.keys(notesParEval(S.notes.find(n=>n.id===code))[e.id]||{}).length; if (dejà) return toast(`Impossible : ${dejà} note(s) déjà saisie(s) pour « ${e.libelle} ».`);
+    maj({evaluations:x.evaluations.filter((_,k)=>k!==i)}, "Évaluation retirée", `Évaluation retirée : ${e.libelle}`); }));
   $("#fed") && ($("#fed").onclick = () => formFormation(code));
   $("#sheet").querySelectorAll("[data-ft]").forEach(b => b.onclick = () => { const t = b.dataset.ft; if (["Suspendue","Clôturée","Archivée"].includes(t) && obs().length<3) return toast("Indiquez le motif."); if (t!=="Brouillon" && t==="Ouverte" && !(x.formateurs||[]).length) toast("Attention : aucun formateur affecté."); maj({statut:t}, `Formation : ${t}`, `${libT[t]||t} la formation`, t, ["secretaire","pedagogie"]); });
   $("#sheet").querySelectorAll("[data-mup]").forEach(b => b.onclick = () => { const i = Number(b.dataset.mup), L = mods.slice(); [L[i-1], L[i]] = [L[i], L[i-1]]; maj({modules:L}, "Ordre des modules modifié", `Module « ${mods[i].titre} » déplacé`); });
@@ -2945,7 +3012,7 @@ setTimeout(() => { const sp = $("#splash"); if (sp){ sp.classList.add("out"); se
 function decisionNotes(code, act){
   const ND = S.notes.find(n=>n.id===code); if (!ND) return;
   const titres = {v:"Valider les notes", r:"Retourner les notes au formateur", o:"Rouvrir pour rectification", c:"Contrôle du Secrétariat général"};
-  openSheet(`<h2>${titres[act]}</h2><p class="small muted">${esc(code)} · ${esc(nomForm(code))} · ${Object.keys(ND.notes||{}).length} note(s)</p>
+  openSheet(`<h2>${titres[act]}</h2><p class="small muted">${esc(code)} · ${esc(nomForm(code))} · ${Object.values(notesParEval(ND)).reduce((a,m)=>a+Object.keys(m).length,0)} note(s) saisie(s)</p>
     <label class="f" for="nd_o">${act==="v"||act==="c"?"Observation (facultative)":"Motif (obligatoire)"}<textarea id="nd_o" maxlength="600"></textarea></label>
     <div class="row"><button class="btn ${act==="v"||act==="c"?"vert":"primary"}" id="nd_ok">Confirmer</button><button class="btn ghost" data-close>Annuler</button></div>`);
   $("#nd_ok").onclick = async () => {
@@ -2955,7 +3022,7 @@ function decisionNotes(code, act){
     const lib = {v:"Notes validées", r:"Notes retournées pour correction", o:"Notes rouvertes pour rectification", c:"Contrôle du Secrétariat général"}[act];
     if (await write(()=>S.db.doc("notes/"+code).update({...data, historique: ajoute(ND.historique, trace(lib, act==="c" ? (ND.validation?.statut||"") : data.validation.statut, o))}), lib)){
       log("notes", `${code} : ${lib.toLowerCase()}${o?` · ${o}`:""}`, act==="c" ? ["formation"] : ["secretaire","pedagogie"]);
-      if (act==="v"){ const L = Object.entries(ND.notes||{}).map(([k,v])=>({matricule:k, ref:`${code}|${v}`})); preparerMessages("note", L).then(M => M.length && toast(`${M.length} message(s) de note préparé(s) dans « WhatsApp étudiants »`)); }
+      if (act==="v"){ const L = Object.entries(S.C.peda).filter(([,p])=>p.par[code]?.moyenne!=null).map(([k,p])=>({matricule:k, ref:`${code}|${n20(p.par[code].moyenne)}`})); preparerMessages("note", L).then(M => M.length && toast(`${M.length} message(s) de note préparé(s) dans « WhatsApp étudiants »`)); }
       closeSheet();
     }
   };
@@ -3813,6 +3880,304 @@ function abonnerEquipe(){
   mesComsResp().forEach(c => sub("rapports_equipe","rapportsEquipe", fusion("c_"+c), db.collection("rapports_equipe").where("commissions","array-contains",c)));
 }
 
+/* =====================================================================
+   PROGRAMME DE LA COMMUNAUTÉ — calendrier commun visible par tous,
+   programmation, pointage relié aux séances, fiche pédagogique.
+   Académie : Présidence et Responsable Formation · Tutorat : Responsable des Tuteurs
+   Communauté : Présidence et Secrétariat général · Réunions : reprises du module Réunions
+   ===================================================================== */
+const TYPES_PROG = {academie:["CVPB Académie","#5fdc74"], tutorat:["Tutorat","#5aa9ff"], communaute:["Communauté","#f2b84b"], reunion:["Réunion","#b48cff"]};
+const MODES_PROG = ["Présentiel","En ligne","Hybride"];
+const peutProgrammer = t => presidence() || (t==="academie" && aRole("formation")) || (t==="tutorat" && aRole("tuteurs")) || (t==="communaute" && aRole("secretaire"));
+const typesProgrammables = () => ["academie","tutorat","communaute"].filter(peutProgrammer);
+const addJours = (d, n) => { const x = parseD(d); x.setDate(x.getDate()+n); return isoD(x); };
+const pillProg = st => `<span class="pill ${st==="Annulée"?"bad":st==="Reportée"?"warn":st==="Tenue"?"ok":"mute"}">${esc(st||"Programmée")}</span>`;
+const heuresProg = e => e.hDebut ? `${e.hDebut.replace(":","h")}${e.hFin?"–"+e.hFin.replace(":","h"):""}` : "Toute la journée";
+const jourLong = d => parseD(d).toLocaleDateString("fr-FR",{weekday:"long", day:"numeric", month:"long"});
+/* Spécialité de l'étudiant (« … (IAN-RSI) ») rapprochée de celle du programme (« IAN-RSI : … ») par le code */
+const memeSpec = (etu, sp) => !!sp && (etu===sp || codeSpec(etu)===codeSp(sp));
+const delegsDuGroupe = g => actifsTous().filter(c => rolesDe(c).includes("delegue") && groupeDe(c)===g);
+
+/* Tous les événements visibles : programme + réunions déjà lisibles par l'utilisateur */
+function evenements(){
+  const P1 = S.programme.map(e=>({...e}));
+  const R1 = S.reunions.filter(r=>r.debut).map(r=>({id:"R:"+r.id, reunionId:r.id, type:"reunion", titre:r.titre, date:String(r.debut).slice(0,10), hDebut:String(r.debut).slice(11,16), hFin:String(r.fin||"").slice(11,16), lieu:r.lieu||"", statut:r.statut==="Tenue"?"Tenue":r.statut==="Annulée"?"Annulée":r.statut==="Reportée"?"Reportée":"Programmée", intervenants:r.convoques||[]}));
+  return [...P1, ...R1].sort((a,b)=>(a.date+(a.hDebut||"")).localeCompare(b.date+(b.hDebut||"")));
+}
+/* « Mes séances » : j'interviens, je l'ai programmée, ou elle concerne mon groupe / mon niveau */
+function meConcerne(e){
+  const c = compte(); if (!c) return false;
+  if ((e.intervenants||[]).includes(S.email) || e.creeParEmail===S.email) return true;
+  if (e.type==="tutorat" && c.specialite && e.specialite===c.specialite && (!e.niveau || e.niveau===c.niveau)) return true;
+  if (e.type==="academie" && c.niveau){ const f = toutesFormations().find(x=>x.code===e.formation), nv = String(f?.niveau||""); return !nv || /Tous/.test(nv) || nv===c.niveau || (nv.includes("2 et 3") && /Licence [23]/.test(c.niveau)); }
+  return e.type==="communaute";
+}
+function evFiltres(){ return evenements().filter(e => S.pf.types.includes(e.type) && (!S.pf.miens || meConcerne(e))); }
+
+function carteEv(e){
+  const [lib, col] = TYPES_PROG[e.type]||["",""];
+  const sous = e.type==="academie" ? [e.formation && `${e.formation}`, e.module].filter(Boolean).join(" · ") : e.type==="tutorat" ? groupeLib(`${e.specialite||""} · ${e.niveau||""}`) : "";
+  const inter = (e.intervenants||[]).slice(0,3).map(nomDe).join(", ") + ((e.intervenants||[]).length>3?"…":"");
+  return `<button type="button" class="evt ${e.statut==="Annulée"?"annule":""}" data-ev="${esc(e.id)}" style="--c:${col}"><span class="h">${esc(heuresProg(e))}</span><span class="t">${esc(e.titre)}</span><span class="m">${esc(lib)}${sous?` · ${esc(sous)}`:""}${e.type!=="reunion"&&inter?` · ${esc(inter)}`:""}${e.lieu?` · ${esc(e.lieu)}`:e.mode==="En ligne"?" · En ligne":""}</span>${e.statut&&e.statut!=="Programmée"?pillProg(e.statut):""}</button>`;
+}
+
+function vProgramme(){
+  const f = S.pf, ref = f.ref || today(), L = evFiltres(), aujourd = today();
+  const puce = t => `<button type="button" class="chip" data-pt="${t}" aria-pressed="${f.types.includes(t)}" style="--c:${TYPES_PROG[t][1]}"><i></i>${esc(TYPES_PROG[t][0])}</button>`;
+  let corps = "", titrePer = "";
+  if (f.vue==="semaine"){
+    const l0 = lundiDe(ref), jours = Array.from({length:7}, (_,i)=>addJours(l0,i));
+    titrePer = `Semaine du ${parseD(l0).toLocaleDateString("fr-FR",{day:"numeric",month:"long"})}`;
+    corps = `<div class="semaine">${jours.map(d=>{ const E = L.filter(e=>e.date===d); return `<section class="jour ${d===aujourd?"auj":""} ${parseD(d).getDay()===6?"sam":""}"><h3>${esc(jourLong(d))}</h3>${E.length?E.map(carteEv).join(""):`<p class="small muted vide">—</p>`}</section>`; }).join("")}</div>`;
+  } else if (f.vue==="mois"){
+    const d0 = parseD(ref.slice(0,7)+"-01"), m = d0.getMonth(), debut = lundiDe(isoD(d0));
+    titrePer = d0.toLocaleDateString("fr-FR",{month:"long", year:"numeric"});
+    const cases = Array.from({length:42}, (_,i)=>addJours(debut,i)).filter((d,i)=> i<35 || parseD(d).getMonth()===m);
+    corps = `<div class="mois"><div class="mh">${["Lun","Mar","Mer","Jeu","Ven","Sam","Dim"].map(j=>`<span>${j}</span>`).join("")}</div><div class="mg">${cases.map(d=>{ const E = L.filter(e=>e.date===d); return `<button type="button" class="mc ${parseD(d).getMonth()!==m?"hors":""} ${d===aujourd?"auj":""}" data-jour="${d}" aria-label="${esc(jourLong(d))} : ${E.length} événement(s)"><b>${parseD(d).getDate()}</b>${E.slice(0,3).map(e=>`<i style="--c:${TYPES_PROG[e.type][1]}" class="${e.statut==="Annulée"?"annule":""}">${esc(e.titre)}</i>`).join("")}${E.length>3?`<em>+${E.length-3}</em>`:""}</button>`; }).join("")}</div></div>`;
+  } else {
+    const fin = addJours(aujourd, 60), A = L.filter(e=>e.date>=aujourd && e.date<=fin && e.statut!=="Annulée");
+    titrePer = "60 prochains jours";
+    const jours = [...new Set(A.map(e=>e.date))];
+    corps = jours.length ? `<div class="semaine liste">${jours.map(d=>`<section class="jour ${d===aujourd?"auj":""}"><h3>${esc(jourLong(d))}</h3>${A.filter(e=>e.date===d).map(carteEv).join("")}</section>`).join("")}</div>` : `<div class="empty">Rien de programmé dans les 60 prochains jours${f.miens?" pour vous":""}.</div>`;
+  }
+  const aVenir = evenements().filter(e=>e.date>=aujourd && e.statut!=="Annulée");
+  const aPointer = S.programme.filter(e=>["academie","tutorat"].includes(e.type) && e.date<aujourd && e.statut!=="Annulée" && e.statut!=="Tenue" && peutPointer(e));
+  return `<div class="spread"><div><h2>Programme de la communauté</h2><p class="small muted">Formations de la CVPB Académie, séances de tutorat, activités et réunions. ${typesProgrammables().length?`Vous pouvez programmer : ${typesProgrammables().map(t=>TYPES_PROG[t][0]).join(", ")}.`:"Consultation."}</p></div>
+    <div class="row">${typesProgrammables().length?`<button class="btn primary" id="pgNew">${ICO.nouveau} Programmer</button>`:""}<button class="btn" id="pgIcs" title="Fichier à ouvrir avec Google Agenda ou l'agenda du téléphone">Ajouter à mon agenda</button></div></div>
+  <div class="kpis">${kpi(aVenir.filter(e=>e.date<=addJours(aujourd,6)).length,"cette semaine","g")}${kpi(aVenir.filter(e=>e.type==="academie").length,"formations à venir")}${kpi(aVenir.filter(e=>e.type==="tutorat").length,"séances de tutorat à venir")}${aPointer.length?kpi(aPointer.length,"séances passées à pointer","warn"):""}</div>
+  ${aPointer.length?`<div class="card"><h3>À pointer</h3><div class="clist">${aPointer.slice(0,6).map(carteEv).join("")}</div></div>`:""}
+  <div class="filters chips">${["academie","tutorat","communaute","reunion"].map(puce).join("")}<button type="button" class="chip" id="pgMiens" aria-pressed="${f.miens}">Mes séances</button></div>
+  <div class="spread"><div class="subtabs" role="group" aria-label="Vue">${[["semaine","Semaine"],["mois","Mois"],["liste","À venir"]].map(([k,l])=>`<button data-pv="${k}" aria-pressed="${f.vue===k}">${l}</button>`).join("")}</div>
+  ${f.vue!=="liste"?`<div class="row"><button class="btn sm ghost" id="pgPrev" aria-label="Période précédente">‹</button><b class="small" style="min-width:150px;text-align:center">${esc(titrePer)}</b><button class="btn sm ghost" id="pgNext" aria-label="Période suivante">›</button><button class="btn sm" id="pgAuj">Aujourd'hui</button></div>`:""}</div>
+  ${corps}`;
+}
+function bindProgramme(){
+  const m = $("#main"), on = (s, fn) => { const el = $(s); if (el) el.onclick = fn; };
+  m.querySelectorAll("[data-pt]").forEach(b => b.onclick = () => { const t = b.dataset.pt, T = S.pf.types; S.pf.types = T.includes(t) ? T.filter(x=>x!==t) : [...T, t]; render(); });
+  m.querySelectorAll("[data-pv]").forEach(b => b.onclick = () => { S.pf.vue = b.dataset.pv; render(); });
+  m.querySelectorAll("[data-jour]").forEach(b => b.onclick = () => { S.pf.ref = b.dataset.jour; S.pf.vue = "semaine"; render(); });
+  on("#pgMiens", () => { S.pf.miens = !S.pf.miens; render(); });
+  const pas = k => { const r = S.pf.ref || today(); if (S.pf.vue==="mois"){ const d = parseD(r.slice(0,7)+"-01"); d.setMonth(d.getMonth()+k); S.pf.ref = isoD(d); } else S.pf.ref = addJours(r, 7*k); render(); };
+  on("#pgPrev", () => pas(-1)); on("#pgNext", () => pas(1)); on("#pgAuj", () => { S.pf.ref = ""; render(); });
+  on("#pgNew", () => formProg());
+  on("#pgIcs", () => exporterIcs(evFiltres().filter(e=>e.date>=addJours(today(),-7) && e.statut!=="Annulée"), "CVPB_programme"));
+  bindEvs(m);
+}
+function bindEvs(root){ root.querySelectorAll("[data-ev]").forEach(b => b.onclick = e => { e.preventDefault(); ficheProg(b.dataset.ev); }); }
+
+/* Bloc de l'accueil (tout le monde) : mes 5 prochaines séances */
+function blocProgramme(){
+  const auj = today(), L = evenements().filter(e=>e.date>=auj && e.statut!=="Annulée" && meConcerne(e)).slice(0,5);
+  const pt = S.programme.filter(e=>["academie","tutorat"].includes(e.type) && e.date<auj && !["Annulée","Tenue"].includes(e.statut) && peutPointer(e)).length;
+  return `<div class="card"><div class="spread"><h3>Mon programme</h3><a class="btn ghost" href="#${role()==="tuteur"?"t-programme":"programme"}">Calendrier</a></div>
+  ${pt?`<div class="banner">${pt} séance(s) passée(s) à pointer.</div>`:""}
+  ${L.length?`<div class="clist">${L.map(e=>carteEv(e).replace('<span class="h">', `<span class="h">${esc(dLong(e.date))} · `)).join("")}</div>`:`<div class="empty">Rien de programmé pour vous prochainement.</div>`}</div>`;
+}
+
+const peutPointer = e => {
+  if (e.type==="academie") return presidence() || aRole("formation") || ((tousMesRoles().includes("pedagogie")) && (toutesFormations().find(f=>f.code===e.formation)?.formateurs||[]).includes(S.email));
+  if (e.type==="tutorat") return presidence() || aRole("tuteurs") || (e.intervenants||[]).includes(S.email);
+  return false;
+};
+
+function ficheProg(id){
+  const e = evenements().find(x=>x.id===id); if (!e) return toast("Événement introuvable.");
+  if (e.type==="reunion") return ficheReunion(e.reunionId);
+  const [lib, col] = TYPES_PROG[e.type], gere = peutProgrammer(e.type), passe = e.date <= today();
+  const F = e.formation ? toutesFormations().find(f=>f.code===e.formation) : null;
+  const dem = e.demande ? S.demandesCours.find(d=>d.id===e.demande) : null;
+  const se = e.seanceId ? S.seances.find(x=>x.id===e.seanceId) : null, pt = S.pointagesTut.find(x=>x.id===e.id);
+  const resume = pres => { const v = Object.values(pres||{}).filter(Boolean), c = k=>v.filter(x=>x===k).length; return `${c("P")+c("R")}/${v.length} présents · ${c("R")} retard(s) · ${c("J")} absence(s) justifiée(s) · ${c("A")} absence(s)`; };
+  openSheet(`<div class="spread"><div><span class="pill" style="background:${col}22;color:inherit;border:1px solid ${col}">${esc(lib)}</span><h2 style="margin-top:6px">${esc(e.titre)}</h2><p class="small muted">${esc(jourLong(e.date))} · ${esc(heuresProg(e))}</p></div>${pillProg(e.statut)}</div>
+    <dl class="dl">
+      ${F?`<dt>Formation</dt><dd>${esc(F.code)} · ${esc(F.intitule)}${e.module?`<br><span class="small">Module : ${esc(e.module)}</span>`:""}</dd>`:""}
+      ${e.type==="tutorat"?`<dt>Groupe</dt><dd>${esc(groupeLib(`${e.specialite} · ${e.niveau}`))}</dd>`:""}
+      ${e.type==="communaute"&&e.public?`<dt>Public</dt><dd>${esc(e.public)}</dd>`:""}
+      <dt>${e.type==="tutorat"?"Tuteur(s)":"Intervenant(s)"}</dt><dd>${(e.intervenants||[]).map(nomDe).map(esc).join(", ")||"—"}</dd>
+      <dt>Lieu</dt><dd>${esc(e.mode||"")}${e.lieu?` · ${esc(e.lieu)}`:""}${e.lien?`<br><a href="${esc(e.lien)}" target="_blank" rel="noopener">Rejoindre / ouvrir le lien</a>`:""}</dd>
+      <dt>Programmé par</dt><dd>${esc(e.creeParNom||"")}</dd>
+    </dl>
+    ${e.description?`<div class="quote">${esc(e.description)}</div>`:""}
+    ${dem?`<div class="card"><h3>Demande du délégué</h3><p class="small"><b>${esc(dem.matiere)}</b> · ${esc(dem.delegueNom||"")}</p><p class="small">${esc(dem.besoin||"")}</p>${dem.lien?`<a class="small" href="${esc(dem.lien)}" target="_blank" rel="noopener">Document du cours</a>`:""}</div>`:""}
+    ${e.statut==="Annulée"&&e.motif?`<div class="banner">Annulée : ${esc(e.motif)}</div>`:""}
+    ${se?`<div class="card"><h3>Pointage</h3><p class="small">${resume(se.presences)} · ${esc(se.validation?.statut||"Soumise")}</p></div>`:e.seanceId?`<p class="small muted">Séance pointée par ${esc(e.pointePar||"")}.</p>`:""}
+    ${pt?`<div class="card"><h3>Pointage</h3><p class="small">${resume(pt.presences)} · par ${esc(pt.parNom||"")}</p></div>`:e.type==="tutorat"&&e.statut==="Tenue"&&!pt?`<p class="small muted">Séance pointée par ${esc(e.pointePar||"")}.</p>`:""}
+    ${gere && e.statut!=="Annulée"?`<label class="f" for="pg_mo">Motif (pour un report ou une annulation)<input type="text" id="pg_mo" maxlength="200"></label>`:""}
+    <div class="row">
+      ${peutPointer(e) && passe && e.statut!=="Annulée"?`<button class="btn vert" id="pgPt">${e.statut==="Tenue"?"Modifier le pointage":"Pointer les présences"}</button>`:""}
+      ${gere && e.statut!=="Annulée" && e.statut!=="Tenue"?`<button class="btn" id="pgEd">Modifier / reporter</button><button class="btn danger" id="pgAn">Annuler la séance</button>`:""}
+      ${presidence() && e.statut!=="Tenue"?`<button class="btn ghost" id="pgDel">Supprimer</button>`:""}
+      <button class="btn ghost" id="pgCal">Ajouter à mon agenda</button><button class="btn ghost" data-close>Fermer</button></div>
+    ${(e.historique||[]).length?`<details class="card"><summary>Historique (${e.historique.length})</summary>${histoHTML(e.historique)}</details>`:""}`);
+  const on = (s, fn) => { const el = $(s); if (el) el.onclick = fn; };
+  on("#pgCal", () => exporterIcs([e], "CVPB_"+normNom(e.titre).replace(/ /g,"_")));
+  on("#pgEd", () => formProg(e.id));
+  on("#pgPt", () => e.type==="academie" ? (se ? formSeance(se.id) : formSeance(null, {date:e.date, formation:e.formation, programme:e.id})) : formPointageTut(e.id));
+  const an = $("#pgAn"); an && confirmBtn(an, "Confirmer l'annulation", async () => {
+    const mo = ($("#pg_mo")?.value||"").trim(); if (mo.length<3) return toast("Indiquez le motif de l'annulation.");
+    if (await write(()=>S.db.doc("programme/"+e.id).update({statut:"Annulée", motif:mo, majLe:nowISO(), historique:ajoute(e.historique, trace("Annulation","Annulée", mo))}), "Séance annulée")){ log("programme", `Annulé : ${e.titre} du ${dFR(e.date)} · ${mo}`, destinatairesProg(e)); closeSheet(); }
+  });
+  const del = $("#pgDel"); del && confirmBtn(del, "Supprimer définitivement ?", async () => { if (await write(()=>S.db.doc("programme/"+e.id).delete(), "Événement supprimé")) closeSheet(); });
+}
+
+/* Qui prévenir : intervenants, responsables du domaine, délégués du groupe ; tout le monde pour la communauté */
+function destinatairesProg(e){
+  const inter = (e.intervenants||[]).map(x=>"e:"+x);
+  if (e.type==="communaute") return ["tous"];
+  if (e.type==="tutorat") return ["tuteurs","accompagnement", ...inter, ...delegsDuGroupe(`${e.specialite} · ${e.niveau}`).map(d=>"e:"+d.em)];
+  return ["formation","pedagogie","accompagnement", ...inter];
+}
+
+function formProg(id){
+  const ex = id ? S.programme.find(x=>x.id===id) : null;
+  const types = ex ? [ex.type] : typesProgrammables(); if (!types.length) return;
+  const st = {type: ex?.type || (types.includes("academie") ? "academie" : types[0]), ...ex};
+  const forms = toutesFormations().filter(f=>!["Archivée","Brouillon","Clôturée"].includes(f.statut));
+  const tous = actifsTous();
+  openSheet(`<h2>${ex?"Modifier ou reporter":"Programmer"}</h2>
+  <form id="pgf" class="form">
+    <label class="f" for="pg_ty">Type<select id="pg_ty" ${ex?"disabled":""}>${opts(types.map(t=>[t, TYPES_PROG[t][0]]), st.type)}</select></label>
+    <div id="pg_spec"></div>
+    <label class="f" for="pg_ti">Titre<input type="text" id="pg_ti" maxlength="120" value="${esc(st.titre||"")}" placeholder="Rempli automatiquement si vide"></label>
+    <div class="g2"><label class="f" for="pg_da">Date<input type="date" id="pg_da" value="${esc(st.date||"")}"></label>
+    <div class="g2"><label class="f" for="pg_hd">Début<input type="time" id="pg_hd" value="${esc(st.hDebut||"09:00")}"></label><label class="f" for="pg_hf">Fin<input type="time" id="pg_hf" value="${esc(st.hFin||"11:00")}"></label></div></div>
+    <div class="row" id="pg_rap"><span class="small muted">Raccourci :</span><button type="button" class="btn sm" id="pg_sam">Samedi prochain</button></div>
+    <div class="g2"><label class="f" for="pg_mo2">Mode<select id="pg_mo2">${opts(MODES_PROG, st.mode||"Présentiel")}</select></label><label class="f" for="pg_li">Lieu<input type="text" id="pg_li" maxlength="120" value="${esc(st.lieu||"")}" placeholder="Ex. : Maison des jeunes de Port-Bouët"></label></div>
+    <label class="f" for="pg_ln">Lien (Google Meet, WhatsApp…) facultatif<input type="url" id="pg_ln" maxlength="400" value="${esc(st.lien||"")}" placeholder="https://meet.google.com/…"></label>
+    <label class="f" for="pg_de">Contenu, consignes, matériel à prévoir<textarea id="pg_de" maxlength="1500">${esc(st.description||"")}</textarea></label>
+    ${ex?`<label class="f" for="pg_mt">Motif de la modification (obligatoire en cas de report)<input type="text" id="pg_mt" maxlength="200"></label>`:`<label class="f" for="pg_rp">Répéter chaque semaine, même jour et même heure<select id="pg_rp">${opts(Array.from({length:16},(_,i)=>[i+1, i?`${i+1} semaines (${i+1} séances)`:"Non, une seule séance"]), 1)}</select></label>`}
+    <div class="row"><button class="btn primary" type="submit">${ex?"Enregistrer et prévenir":"Programmer et prévenir"}</button><button class="btn ghost" type="button" data-close>Annuler</button></div>
+  </form>`);
+  const coches = (sel, L, cur) => `<div class="checks" id="${sel}">${L.map(c=>`<label><input type="checkbox" value="${esc(c.em)}" ${cur.includes(c.em)?"checked":""}> ${esc(c.nom)} <span class="small muted">${esc(c.tag||"")}</span></label>`).join("")||'<div class="empty">Personne à proposer.</div>'}</div>`;
+  const drawSpec = () => {
+    const t = $("#pg_ty").value, z = $("#pg_spec"), cur = st.intervenants || [];
+    if (t==="academie"){
+      const fc = st.formation && forms.some(f=>f.code===st.formation) ? st.formation : forms[0]?.code;
+      const F = forms.find(f=>f.code===fc) || {}, fo = F.formateurs||[];
+      const L = [...tous.filter(c=>fo.includes(c.em)).map(c=>({...c, tag:"formateur de la formation"})), ...tous.filter(c=>!fo.includes(c.em) && rolesDe(c).some(r=>["pedagogie","formation","tuteur","president"].includes(r)))];
+      z.innerHTML = forms.length ? `<div class="g2"><label class="f" for="pg_fo">Formation<select id="pg_fo">${opts(forms.map(f=>[f.code, `${f.code} · ${f.intitule}`]), fc)}</select></label>
+        <label class="f" for="pg_md">Module<select id="pg_md">${opts((F.modules||[]).map(m=>[m.titre, m.titre]), st.module||"", "— Aucun / plusieurs —")}</select></label></div>
+        <fieldset class="f"><legend>Intervenant(s)</legend>${coches("pg_in", L, cur.length?cur:fo)}<span class="hint">Seuls les formateurs affectés à la formation (catalogue), le Responsable Formation et la Présidence peuvent pointer.</span></fieldset>`
+        : `<div class="banner">Aucune formation active dans le catalogue. Créez d'abord la formation dans <a href="#catalogue">Catalogue des formations</a>.</div>`;
+      $("#pg_fo") && ($("#pg_fo").onchange = e => { st.formation = e.target.value; st.module = ""; st.intervenants = []; drawSpec(); });
+    } else if (t==="tutorat"){
+      const sp = st.specialite || SPECS_FORM[0], nv = st.niveau || (P().niveaux||[])[0] || "Licence 1", g = `${sp} · ${nv}`;
+      const tutG = tuteursDuGroupe(g).map(c=>c.em);
+      const L = [...tous.filter(c=>tutG.includes(c.em)).map(c=>({...c, tag:"tuteur du groupe"})), ...tous.filter(c=>!tutG.includes(c.em) && rolesDe(c).includes("tuteur")).map(c=>({...c, tag:groupeLib(groupeDe(c))}))];
+      const dems = S.demandesCours.filter(d=>d.groupe===g && !["Clôturée","Rejetée"].includes(d.statut));
+      z.innerHTML = `<div class="g2"><label class="f" for="pg_sp">Spécialité<select id="pg_sp">${opts(SPECS_FORM.map(x=>[x, codeSp(x)]), sp)}</select></label><label class="f" for="pg_nv">Niveau<select id="pg_nv">${opts(P().niveaux||["Licence 1","Licence 2","Licence 3"], nv)}</select></label></div>
+        <label class="f" for="pg_dm">Répond à une demande de délégué (facultatif)<select id="pg_dm">${opts(dems.map(d=>[d.id, `${d.type==="cours"?"Cours à expliquer":"Demande"} · ${d.matiere} · ${d.delegueNom||""}`]), st.demande||"", dems.length?"— Aucune —":"— Aucune demande en cours pour ce groupe —")}</select></label>
+        <fieldset class="f"><legend>Tuteur(s)</legend>${coches("pg_in", L, cur.length?cur:tutG)}<span class="hint">Les tuteurs cochés pourront pointer les présences de la séance.</span></fieldset>`;
+      const re = () => { st.specialite = $("#pg_sp").value; st.niveau = $("#pg_nv").value; st.intervenants = []; st.demande = ""; drawSpec(); };
+      $("#pg_sp").onchange = re; $("#pg_nv").onchange = re;
+      $("#pg_dm").onchange = e => { const d = dems.find(x=>x.id===e.target.value); if (d && !$("#pg_ti").value.trim()) $("#pg_ti").value = `Tutorat · ${d.matiere}`; if (d && !$("#pg_de").value.trim()) $("#pg_de").value = d.besoin||""; };
+    } else {
+      z.innerHTML = `<label class="f" for="pg_pu">Public concerné<input type="text" id="pg_pu" maxlength="120" value="${esc(st.public||"")}" placeholder="Ex. : tous les membres, nouveaux bacheliers…"></label>
+        <fieldset class="f"><legend>Responsable(s) de l'activité (facultatif)</legend>${coches("pg_in", tous.map(c=>({...c, tag:ROLES[c.role]?.l||""})), cur)}</fieldset>`;
+    }
+  };
+  $("#pg_ty").onchange = () => { st.type = $("#pg_ty").value; st.intervenants = []; drawSpec(); };
+  drawSpec();
+  $("#pg_sam").onclick = () => { const d = parseD(today()); d.setDate(d.getDate() + ((6 - d.getDay() + 7) % 7 || 7)); $("#pg_da").value = isoD(d); };
+  $("#pgf").onsubmit = async ev => {
+    ev.preventDefault();
+    const t = $("#pg_ty").value, date = $("#pg_da").value, hDebut = $("#pg_hd").value, hFin = $("#pg_hf").value;
+    if (!date) return toast("Indiquez la date.");
+    if (!ex && date < today()) return toast("La date est déjà passée.");
+    if (hDebut && hFin && hFin <= hDebut) return toast("L'heure de fin doit suivre l'heure de début.");
+    const intervenants = [...$("#sheet").querySelectorAll("#pg_in input:checked")].map(i=>i.value);
+    const d = {type:t, date, hDebut, hFin, mode:$("#pg_mo2").value, lieu:$("#pg_li").value.trim(), lien:$("#pg_ln").value.trim(), description:$("#pg_de").value.trim(), intervenants, intervenantsNoms:intervenants.map(nomDe)};
+    if (d.lien && !/^https?:\/\//i.test(d.lien)) return toast("Le lien doit commencer par https://");
+    if (!d.lieu && d.mode!=="En ligne") return toast("Indiquez le lieu.");
+    if (t==="academie"){ if (!$("#pg_fo")) return toast("Aucune formation disponible."); d.formation = $("#pg_fo").value; d.module = $("#pg_md").value; if (!intervenants.length) return toast("Choisissez au moins un intervenant."); }
+    if (t==="tutorat"){ d.specialite = $("#pg_sp").value; d.niveau = $("#pg_nv").value; d.demande = $("#pg_dm").value; if (!intervenants.length) return toast("Choisissez au moins un tuteur."); }
+    if (t==="communaute") d.public = $("#pg_pu").value.trim();
+    const auto = t==="academie" ? `${nomForm(d.formation)||d.formation}${d.module?` · ${d.module}`:""}` : t==="tutorat" ? `Tutorat ${groupeLib(`${d.specialite} · ${d.niveau}`)}` : "";
+    d.titre = $("#pg_ti").value.trim() || auto; if (d.titre.length<3) return toast("Indiquez le titre.");
+    if (ex){
+      const reporte = ex.date!==date || ex.hDebut!==hDebut, mt = $("#pg_mt").value.trim();
+      if (reporte && mt.length<3) return toast("Indiquez le motif du report.");
+      const statut = reporte ? "Reportée" : ex.statut;
+      if (await write(()=>S.db.doc("programme/"+ex.id).update({...d, statut, majLe:nowISO(), historique:ajoute(ex.historique, trace(reporte?`Reportée du ${dFR(ex.date)} ${ex.hDebut||""} au ${dFR(date)} ${hDebut}`:"Modification", statut, mt))}), reporte?"Séance reportée, participants prévenus":"Modifications enregistrées")){
+        log("programme", reporte ? `Reporté : ${d.titre} → ${jourLong(date)} ${heuresProg(d)}${mt?` (${mt})`:""}` : `Modifié : ${d.titre} du ${dFR(date)}`, destinatairesProg(d)); closeSheet(); }
+      return;
+    }
+    const n = Number($("#pg_rp").value)||1, serie = n>1 ? gid("S") : "";
+    const ops = Array.from({length:n}, (_,i) => ({path:"programme/"+gid("PG")+i, data:{...d, date:addJours(date, 7*i), serie, statut:"Programmée", creeParEmail:S.email, creeParNom:compte().nom, creeLe:nowISO(), historique:[trace(n>1?`Programmation (série de ${n} séances)`:"Programmation","Programmée")]}}));
+    if (await write(()=>S.db.lots(ops), n>1 ? `${n} séances programmées` : "Séance programmée")){
+      log("programme", `${TYPES_PROG[t][0]} : ${d.titre} · ${jourLong(date)} ${heuresProg(d)}${n>1?` (puis chaque semaine, ${n} séances)`:""}`, destinatairesProg(d));
+      if (t==="tutorat" && d.demande){ const dm = S.demandesCours.find(x=>x.id===d.demande); if (dm) S.db.doc("demandes_cours/"+dm.id).update({statut:"Programmée", reponse:`Séance programmée le ${dFR(date)} à ${hDebut.replace(":","h")}`, historique:ajoute(dm.historique, trace("Séance programmée","Programmée"))}).catch(()=>{}); }
+      closeSheet();
+    }
+  };
+}
+
+/* Pointage d'une séance de tutorat : étudiants du groupe (spécialité + niveau) */
+function formPointageTut(id){
+  const e = S.programme.find(x=>x.id===id); if (!e) return;
+  const ex = S.pointagesTut.find(x=>x.id===id), pr = {...(ex?.presences||{})};
+  const L = S.etudiants.filter(s=>s.statut!=="Inactif" && memeSpec(s.specialite, e.specialite) && s.niveau===e.niveau).sort((a,b)=>a.nom.localeCompare(b.nom,"fr"));
+  openSheet(`<h2>Pointage · ${esc(e.titre)}</h2><p class="small muted">${esc(jourLong(e.date))} · ${esc(groupeLib(`${e.specialite} · ${e.niveau}`))} · P présent · R retard · J absent justifié · A absent</p>
+    <div class="row"><button class="btn sm" type="button" id="pt_all">Tous présents</button><span class="small muted">Laisser vide = non concerné.</span></div>
+    <div class="plist" id="pt_l">${L.map(s=>`<div class="prow"><span>${esc(s.nom)} <span class="small muted num">${esc(s.matricule)}</span></span><span class="seg" data-who="${esc(s.matricule)}">${["P","R","J","A"].map(v=>`<button type="button" data-v="${v}" aria-pressed="${pr[s.matricule]===v}">${v}</button>`).join("")}</span></div>`).join("") || `<div class="empty">Aucun étudiant enregistré pour ce groupe.</div>`}</div>
+    <label class="f" for="pt_o">Observations (facultatif)<textarea id="pt_o" maxlength="800">${esc(ex?.obs||"")}</textarea></label>
+    <div class="row"><button class="btn primary" id="pt_ok">Enregistrer le pointage</button><button class="btn" data-close>Annuler</button></div>`);
+  const maj = () => $("#pt_l").querySelectorAll(".seg").forEach(sg => sg.querySelectorAll("button").forEach(x=>x.setAttribute("aria-pressed", pr[sg.dataset.who]===x.dataset.v)));
+  $("#pt_l").querySelectorAll(".seg button").forEach(b => b.onclick = () => { const w = b.parentElement.dataset.who; pr[w] = pr[w]===b.dataset.v ? "" : b.dataset.v; maj(); });
+  $("#pt_all").onclick = () => { L.forEach(s=>pr[s.matricule]="P"); maj(); };
+  $("#pt_ok").onclick = async () => {
+    const presences = Object.fromEntries(Object.entries(pr).filter(([,v])=>v));
+    if (!Object.keys(presences).length) return toast("Pointez au moins un étudiant.");
+    const data = {programme:id, date:e.date, titre:e.titre, specialite:e.specialite, niveau:e.niveau, tuteurs:e.intervenants||[], presences, obs:$("#pt_o").value.trim(), par:S.email, parNom:compte().nom, le:nowISO(), historique:ajoute(ex?.historique, trace(ex?"Pointage modifié":"Pointage","Tenue"))};
+    if (await write(()=>S.db.doc("pointages_tutorat/"+id).set(data), "Présences enregistrées")){
+      S.db.doc("programme/"+id).update({statut:"Tenue", pointeLe:nowISO(), pointePar:compte().nom, historique:ajoute(e.historique, trace("Séance pointée","Tenue"))}).catch(()=>{});
+      const v = Object.values(presences); log("programme", `Tutorat pointé : ${e.titre} du ${dFR(e.date)} · ${v.filter(x=>x==="P"||x==="R").length}/${v.length} présents`, ["tuteurs","accompagnement"]); closeSheet();
+    }
+  };
+}
+
+/* Export iCalendar (.ics) : ouvre dans Google Agenda ou l'agenda du téléphone */
+function exporterIcs(L, nom){
+  if (!L.length) return toast("Aucun événement à exporter.");
+  const t = (d, h) => d.replace(/-/g,"") + (h ? "T" + h.replace(":","") + "00" : "");
+  const echap = v => String(v||"").replace(/\\/g,"\\\\").replace(/\n/g,"\\n").replace(/[,;]/g, m=>"\\"+m);
+  const lignes = ["BEGIN:VCALENDAR","VERSION:2.0","PRODID:-//CVPB//CVPB Manager//FR","CALSCALE:GREGORIAN","X-WR-CALNAME:Programme CVPB","X-WR-TIMEZONE:Africa/Abidjan"];
+  for (const e of L){
+    lignes.push("BEGIN:VEVENT", `UID:${e.id}@cvpb`, `DTSTAMP:${new Date().toISOString().replace(/[-:]/g,"").slice(0,15)}Z`);
+    if (e.hDebut){ lignes.push(`DTSTART;TZID=Africa/Abidjan:${t(e.date,e.hDebut)}`, `DTEND;TZID=Africa/Abidjan:${t(e.date,e.hFin||e.hDebut)}`); }
+    else lignes.push(`DTSTART;VALUE=DATE:${t(e.date)}`);
+    lignes.push(`SUMMARY:${echap(`[${TYPES_PROG[e.type][0]}] ${e.titre}`)}`, `LOCATION:${echap([e.lieu, e.lien].filter(Boolean).join(" · "))}`, `DESCRIPTION:${echap([e.description, (e.intervenants||[]).length && e.type!=="reunion" ? "Intervenant(s) : "+(e.intervenants||[]).map(nomDe).join(", ") : ""].filter(Boolean).join("\n"))}`, "END:VEVENT");
+  }
+  lignes.push("END:VCALENDAR");
+  const a = document.createElement("a"); a.href = URL.createObjectURL(new Blob([lignes.join("\r\n")], {type:"text/calendar"})); a.download = nom + ".ics"; document.body.appendChild(a); a.click(); a.remove();
+  toast(`${L.length} événement(s) exporté(s) : ouvrez le fichier pour l'ajouter à votre agenda.`);
+}
+
+/* ---------- Fiche pédagogique de l'étudiant ---------- */
+function blocPedaEtu(mat){
+  const s = etuBy(mat), p = S.C.peda[mat]; if (!s || !p) return "";
+  const forms = Object.entries(p.par), valides = forms.filter(([,f])=>f.valide===true).length;
+  const ND = code => notesParEval(S.notes.find(n=>n.id===code));
+  const prochains = evenements().filter(e=>e.date>=today() && e.statut!=="Annulée" && ((e.type==="tutorat" && memeSpec(s.specialite, e.specialite) && e.niveau===s.niveau) || (e.type==="academie" && s.academie && apprenantsPour(e.formation).some(x=>x.matricule===mat)))).slice(0,4);
+  return `<div class="card"><h3>Suivi pédagogique</h3>
+    <div class="kpis">${kpi(`${p.pres}/${p.total}`,"séances Académie suivies","g")}${kpi(pct(p.assiduite),"assiduité Académie")}${kpi(`${p.tut.pres}/${p.tut.total}`,"séances de tutorat suivies")}${kpi(p.moyenneGenerale==null?"—":n20(p.moyenneGenerale),"moyenne générale /20")}${kpi(`${valides}/${forms.length}`,"formations validées")}</div>
+    ${forms.length ? forms.map(([code,f])=>{ const evs = evalsDe(toutesFormations().find(x=>x.code===code)), PE = ND(code);
+      return `<div class="card fp"><div class="spread"><b>${esc(code)} · ${esc(nomForm(code))}</b>${f.valide==null?'<span class="pill mute">En cours</span>':f.valide?'<span class="pill ok">Validée</span>':'<span class="pill bad">Non validée</span>'}</div>
+      <p class="small">Séances : <b>${f.pres}/${f.total}</b> (présent ${f.c.P}, retard ${f.c.R}, justifié ${f.c.J}, absent ${f.c.A}) · assiduité <b>${pct(f.assiduite)}</b></p>
+      <div class="tablewrap"><table><thead><tr>${evs.map(e=>`<th class="r">${esc(e.libelle)}<br><span class="small muted">coef. ${esc(e.coef||1)}</span></th>`).join("")}<th class="r">Moyenne</th><th>Mention</th><th class="r">Rang</th></tr></thead>
+      <tbody><tr>${evs.map(e=>`<td class="r">${esc(n20((PE[e.id]||{})[mat]))}</td>`).join("")}<td class="r"><b>${esc(n20(f.moyenne))}</b>${f.moyenne!=null&&!f.complet?' <span class="small muted">(provisoire)</span>':""}</td><td>${esc(f.mention||"—")}</td><td class="r">${f.rang?`${f.rang}/${f.effectif}`:"—"}</td></tr></tbody></table></div></div>`; }).join("") : `<div class="empty">Aucune séance ni note à l'Académie pour l'instant.</div>`}
+    ${p.tut.total?`<details class="card"><summary>Tutorat : ${p.tut.pres}/${p.tut.total} séances (${pct(p.tut.assiduite)})</summary><div class="plist">${p.tut.liste.slice(0,12).map(x=>`<div class="prow"><span class="small">${dFR(x.date)} · ${esc(x.titre)}</span><span class="pill ${x.code==="A"?"bad":x.code==="J"?"warn":"ok"}">${{P:"Présent",R:"Retard",J:"Justifié",A:"Absent"}[x.code]||x.code}</span></div>`).join("")}</div></details>`:""}
+    ${prochains.length?`<div class="card"><h3>Prochaines séances</h3><div class="clist">${prochains.map(e=>carteEv(e).replace('<span class="h">', `<span class="h">${esc(dLong(e.date))} · `)).join("")}</div></div>`:""}
+  </div>`;
+}
+
+function abonnerProgramme(){
+  const r = role(), db = S.db, has = (...l) => r==="president" || LECTURE_TOTALE.includes(r) || inclut(l, r);
+  sub("programme","programme", s => { S.programme = rows(s); });
+  if (has("tuteurs","accompagnement","secretaire","formation")) sub("pointages_tutorat","pointagesTut", s => { S.pointagesTut = rows(s); });
+  else if (tousMesRoles().includes("tuteur")) sub("pointages_tutorat","pointagesTut", s => { S.pointagesTut = rows(s); }, db.collection("pointages_tutorat").where("tuteurs","array-contains",S.email));
+}
+
 function sub(path, key, fn, q){
   const timer = setTimeout(()=>{ S.stale=true; queueRender(); }, 10000);
   (q || S.db.collection(path)).onSnapshot(snap => { if (!snap.metadata.fromCache) clearTimeout(timer); fn(snap); S.loaded[key]=true; queueRender(); },
@@ -3844,7 +4209,7 @@ function abonner(){
   else if (r==="tuteur") db.doc("rapports_tuteurs/"+S.uid).onSnapshot(d => { S.tut = d.exists ? [{id:d.id, ...d.data()}] : []; queueRender(); }, ()=>{});
   const canaux = r==="president" ? ["president"] : [r, "u_"+S.uid, "e_"+S.email];
   canaux.forEach((c, i) => db.collection(`notifs/${c}/items`).orderBy("le","desc").limit(lectureTotale()?400:150).onSnapshot(s => { S.jx[i] = rows(s); fusionJournal(); queueRender(); }, ()=>{}));
-  abonnerGouv(); abonnerDelegues(); abonnerEquipe();
+  abonnerGouv(); abonnerDelegues(); abonnerEquipe(); abonnerProgramme();
   if (lectureTotale()){ sub("consignes","consignes", s => { S.consignes = rows(s); }); sub("evaluations","evaluations", s => { S.evaluations = rows(s); }); }
   else { sub("consignes","consignes", s => { S.consignes = rows(s); }, db.collection("consignes").where("dest","==",S.email)); sub("evaluations","evaluations", s => { S.evaluations = rows(s); }, db.collection("evaluations").where("email","==",S.email)); }
   sub("classement","classements", s => { S.classements = rows(s); });
