@@ -3,7 +3,7 @@ import { firebaseConfig } from "./firebase-config.js";
 
 /*CALC-START*/
 /* ======== Référentiels et calculs (fonctions pures) ======== */
-const TOUS = ["encaissement","caisse","tresorerie","formation","pedagogie","secretaire","tuteurs","accompagnement","responsable","membre"];
+const TOUS = ["encaissement","caisse","tresorerie","formation","pedagogie","secretaire","tuteurs","accompagnement","responsable","membre","delegue"];
 /* Rôles qui voient tout en lecture (sans rien valider) */
 const LECTURE_TOTALE = ["vicepresident"];
 /* Le/la trésorier(e) tient aussi la caisse : le rôle « caisse » cumule les accès de la trésorerie */
@@ -22,7 +22,8 @@ const ROLES = {
   pedagogie:{l:"Formateur de l'Académie", perms:["peda.voir","peda.saisir","tel.voir","msg.peda"], partage:"Contributeur"},
   tuteur:{l:"Tuteur", perms:["tut.saisir"], partage:"Contributeur"},
   responsable:{l:"Responsable de commission", perms:[], partage:"Contributeur"},
-  membre:{l:"Membre d'équipe (collaborateur)", perms:[], partage:"Contributeur"}
+  membre:{l:"Membre d'équipe (collaborateur)", perms:[], partage:"Contributeur"},
+  delegue:{l:"Délégué de spécialité", perms:[], partage:"Contributeur"}
 };
 const SPECS_FORM = ["IAN-BD : Informatique et Sciences du Numérique – Bases de Données","IAN-RSI : Informatique et Sciences du Numérique – Réseaux et Sécurité Informatique","IAN-DAS : Informatique et Sciences du Numérique – Développement d'Applications et e-Services","IAN-MMX : Informatique et Sciences du Numérique – Multimédia et Arts Numériques","HSN-COM : Humanités et Sciences Numériques – Communication Digitale","GEN-CMD : Gestion, Économie et Numérique – E-commerce et Marketing Digital","ADN-ATD : Administration et Droit du Numérique – E-Administration et Transformations","IAN-STG : Sciences Géospatiales (Géomatique)"];
 const TYPES_ACT = ["Séance de tutorat académique","Révision de cours","Exercices et travaux pratiques","Assistance aux plateformes pédagogiques","Accompagnement individuel","Préparation aux évaluations","Atelier pratique"];
@@ -232,9 +233,9 @@ function confirmBtn(btn, label, fn){ btn.onclick = () => { if (btn.dataset.sure!
 
 /* ======== État ======== */
 const S = {
-  db:null, fb:null, uid:null, email:null, moi:null, sansConfig:false, authPret:false, stale:false, jx:[], decisions:[], taches:[], reunions:[], audit:[],
+  db:null, fb:null, uid:null, email:null, moi:null, sansConfig:false, authPret:false, stale:false, jx:[], demandesCours:[], rapportsDelegues:[], notesTuteurs:[], decisions:[], taches:[], reunions:[], audit:[],
   etudiants:[], prive:{}, encaissements:[], depots:[], operations:[], seances:[], notes:[], params:null, comptes:{}, demandes:{}, journal:[], journalPub:[], journalFin:[], tut:[], T:null, etat:{}, tf:{tuteur:"", statut:"", spec:""},
-  loaded:{}, C:null, sub:{caisse:"synthese", pedagogie:"seances", admin:"comptes", etudiants:""},
+  loaded:{}, C:null, sub:{delegues:"demandes", caisse:"synthese", pedagogie:"seances", admin:"comptes", etudiants:""},
   f:{q:"", niveau:"", situation:"", spec:""}, rf:{q:"", nature:"", mois:"", statut:"valides"},
   firstJournal:true,
   consignes:[], evaluations:[], messages:[], formations:[], affectations:[], rapportsHebdo:[], dossiers:[], rapportsResp:[], syntheses:[], sf:{sem:"", st:""}, df:{st:"ouverts"}, cf2:{st:"", q:""}, editRH:null, mf:{onglet:"attente", type:""}, classements:[], cf:{statut:"", dest:""}, evalP:"", classP:"", rp:{type:"", mois:"", a:"", b:"", tut:""}
@@ -296,6 +297,7 @@ const RL = (...l) => () => inclut(l, role()) || role()==="president" || LECTURE_
 const VIEWS = [
   {id:"accueil", l:"Tableau de bord", ok:()=>true},
   {id:"consignes", l:"Consignes", ok:()=>true},
+  {id:"delegues", l:"Délégués de spécialité", ok:()=>estDelegue() || supDelegues()},
   {id:"taches", l:"Tâches", ok:()=>true},
   {id:"decisions", l:"Décisions", ok:()=>gouvSup() || S.decisions.length>0},
   {id:"reunions", l:"Réunions", ok:()=>true},
@@ -350,6 +352,7 @@ function recalc(){
   S.T = statsTutorat(S.tut, S.comptes, S.C.today);
   if (can("tut.voir")) S.C.alertes.push(...S.T.alertes.filter(a=>!/sans rapport depuis/.test(a.titre)));
   try { S.C.alertes.push(...alertesSuivi()); } catch(e){ console.error(e); }
+  try { S.C.alertes.push(...alertesDelegues()); } catch(e){ console.error(e); }
   const mesRet = mesConsignes().filter(k=>!["Faite","Annulée"].includes(k.statut) && k.echeance<today());
   if (mesRet.length) S.C.alertes.push({niv:"bad", titre:`${mesRet.length} consigne(s) de la Présidence en retard`, detail:mesRet.slice(0,3).map(k=>k.titre).join(" · "), pour:[role()], lien:"#consignes"});
   if (consignesNonLues()) S.C.alertes.push({niv:"warn", titre:`${consignesNonLues()} nouvelle(s) consigne(s) de la Présidence`, detail:mesConsignes().filter(k=>k.statut==="Envoyée").slice(0,3).map(k=>k.titre).join(" · "), pour:[role()], lien:role()==="tuteur"?"#t-consignes":"#consignes"});
@@ -378,16 +381,16 @@ function rendu(){
   if (role()==="tuteur"){ renderTuteur(main); majBadge(); return; }
   const v = view();
   const lab = x => x.id==="accueil" ? (c.role==="president" ? "Tableau général" : "Mon espace") : x.l;
-  const nb = x => x.id==="notifications" ? nonLues().length : x.id==="tutorat" && can("tut.suivre") ? S.T.nouveaux.length : x.id==="suivi" ? (role()==="tuteurs" ? S.rapportsHebdo.filter(r=>r.statut==="Soumis").length : role()==="accompagnement" ? S.rapportsHebdo.filter(r=>r.statut==="Validé").length : role()==="secretaire" ? etatSuivi().aControler : 0) : x.id==="synthese" ? (role()==="secretaire" ? S.rapportsResp.filter(r=>r.statut==="Transmis").length : presidence() ? S.syntheses.filter(s=>s.statut==="Transmise" && !s.luLe).length : S.rapportsResp.filter(r=>r.auteurEmail===S.email && r.statut==="Complément demandé").length) : x.id==="messages" ? S.messages.filter(m=>m.statut==="À envoyer" && (lectureTotale() || domainesMsg().includes(m.domaine))).length : x.id==="consignes" ? (lectureTotale() ? S.consignes.filter(k=>!["Faite","Annulée"].includes(k.statut) && k.echeance<today()).length : consignesNonLues()) : x.id==="taches" ? S.taches.filter(t=>executeur(t) && t.statut==="À faire").length : x.id==="decisions" ? mesDecisions().filter(d=>(d.exec?.[ek(S.email)]?.statut||"À démarrer")==="À démarrer" && !["Exécutée","Annulée"].includes(d.statut)).length : 0;
+  const nb = x => x.id==="notifications" ? nonLues().length : x.id==="tutorat" && can("tut.suivre") ? S.T.nouveaux.length : x.id==="suivi" ? (role()==="tuteurs" ? S.rapportsHebdo.filter(r=>r.statut==="Soumis").length : role()==="accompagnement" ? S.rapportsHebdo.filter(r=>r.statut==="Validé").length : role()==="secretaire" ? etatSuivi().aControler : 0) : x.id==="synthese" ? (role()==="secretaire" ? S.rapportsResp.filter(r=>r.statut==="Transmis").length : presidence() ? S.syntheses.filter(s=>s.statut==="Transmise" && !s.luLe).length : S.rapportsResp.filter(r=>r.auteurEmail===S.email && r.statut==="Complément demandé").length) : x.id==="messages" ? S.messages.filter(m=>m.statut==="À envoyer" && (lectureTotale() || domainesMsg().includes(m.domaine))).length : x.id==="consignes" ? (lectureTotale() ? S.consignes.filter(k=>!["Faite","Annulée"].includes(k.statut) && k.echeance<today()).length : consignesNonLues()) : x.id==="delegues" ? S.rapportsDelegues.filter(r=>r.statut==="Soumis" && mesVisas(r).some(k=>!r.visas?.[k])).length + (aRole("formation","tuteurs") && !presidence() ? S.demandesCours.filter(d=>d.statut==="Soumise").length : 0) : x.id==="taches" ? S.taches.filter(t=>executeur(t) && t.statut==="À faire").length : x.id==="decisions" ? mesDecisions().filter(d=>(d.exec?.[ek(S.email)]?.statut||"À démarrer")==="À démarrer" && !["Exécutée","Annulée"].includes(d.statut)).length : 0;
   navigation(VIEWS.filter(x=>x.ok()).map(x=>({id:x.id, l:x.id==="consignes"&&!lectureTotale()?"Mes consignes":lab(x), n:nb(x)})), v, principauxDe(role()));
   majBadge();
   if (v==="depots") S.sub.caisse = "depots";
-  main.innerHTML = (v==="accueil" ? heroAccueil() + anneaux() + blocGouv() + blocConsignes() : "") + ({taches:vTaches, decisions:vDecisions, reunions:vReunions, organigramme:vOrganigramme, audit:vAudit, suivi:vSuivi, synthese:vSynthese, catalogue:vCatalogue, messages:vMessages, consignes:vConsignes, rapports:vRapports, evaluations:vEvaluations, classement:vClassement, accueil:vAccueil, etudiants:vEtudiants, registre:vRegistre, cotisations:vCotisations, caisse:vCaisse, depots:vCaisse, pedagogie:vPedagogie, tutorat:vTutorat, notifications:vNotifs, admin:vAdmin, compte:vCompte}[v])();
+  main.innerHTML = (v==="accueil" ? heroAccueil() + anneaux() + blocGouv() + blocConsignes() : "") + ({delegues:vDelegues, taches:vTaches, decisions:vDecisions, reunions:vReunions, organigramme:vOrganigramme, audit:vAudit, suivi:vSuivi, synthese:vSynthese, catalogue:vCatalogue, messages:vMessages, consignes:vConsignes, rapports:vRapports, evaluations:vEvaluations, classement:vClassement, accueil:vAccueil, etudiants:vEtudiants, registre:vRegistre, cotisations:vCotisations, caisse:vCaisse, depots:vCaisse, pedagogie:vPedagogie, tutorat:vTutorat, notifications:vNotifs, admin:vAdmin, compte:vCompte}[v])();
   bind(v==="depots" ? "caisse" : v);
   if (v==="compte") bindCompte();
   if (v==="notifications") marquerLu();
-  if (v==="accueil") bindGouvCommun();
-  ({taches:bindTaches, decisions:bindDecisions, reunions:bindReunions, organigramme:bindOrganigramme, audit:bindAudit, suivi:bindSuivi, synthese:bindSynthese, catalogue:bindCatalogue, messages:bindMessages, consignes:bindConsignes, rapports:bindRapports, evaluations:bindEvaluations, classement:bindClassement}[v]||(()=>{}))();
+  if (v==="accueil"){ bindGouvCommun(); bindDeleguesCommun(); }
+  ({delegues:bindDelegues, taches:bindTaches, decisions:bindDecisions, reunions:bindReunions, organigramme:bindOrganigramme, audit:bindAudit, suivi:bindSuivi, synthese:bindSynthese, catalogue:bindCatalogue, messages:bindMessages, consignes:bindConsignes, rapports:bindRapports, evaluations:bindEvaluations, classement:bindClassement}[v]||(()=>{}))();
   $("#main").querySelectorAll("[data-cons]").forEach(b => b.onclick = () => ficheConsigne(b.dataset.cons));
   if (!["suivi","synthese"].includes(v)){ $("#main").querySelectorAll("[data-rh]").forEach(b => b.onclick = e => { e.preventDefault(); ficheHebdo(b.dataset.rh); }); $("#main").querySelectorAll("[data-dos]").forEach(b => b.onclick = () => ficheDossier(b.dataset.dos)); $("#main").querySelectorAll("[data-syn]").forEach(b => b.onclick = () => ficheSynthese(b.dataset.syn)); }
   $("#main").querySelectorAll("[data-goto-sub]").forEach(a => a.addEventListener("click", () => { S.sub.synthese = a.dataset.gotoSub; }));
@@ -495,7 +498,7 @@ function relanceListe(max){
 function vAccueil(){
   const r = role();
   if (r==="president" || LECTURE_TOTALE.includes(r)) return vGeneral();
-  return ({tuteurs:vDashTuteurs, accompagnement:vDashAccomp, secretaire:vDashSG, encaissement:vDashEnc, caisse:vDashCaisse, tresorerie:vDashTreso, formation:vDashFormation, pedagogie:vDashPeda}[r] || vDashEquipe)();
+  return ({tuteurs:vDashTuteurs, accompagnement:vDashAccomp, secretaire:vDashSG, encaissement:vDashEnc, caisse:vDashCaisse, tresorerie:vDashTreso, formation:vDashFormation, pedagogie:vDashPeda, delegue:vDashDelegue}[r] || vDashEquipe)();
 }
 
 /* Responsables de commission et membres d'équipe : leur travail (bloc « Mon travail ») et leur commission */
@@ -1177,13 +1180,14 @@ function ficheRapport(doc, id){
 }
 
 /* ---- Espace Tuteurs ---- */
-const TVIEWS = [{id:"t-accueil", l:"Mon tableau de bord"},{id:"t-hebdo", l:"Rapport de la semaine"},{id:"t-rapports", l:"Mes rapports"},{id:"t-etudiants", l:"Mes étudiants"},{id:"t-consignes", l:"Consignes"},{id:"t-taches", l:"Tâches"},{id:"t-reunions", l:"Réunions"},{id:"t-organigramme", l:"Organigramme"},{id:"t-classement", l:"Classement"},{id:"t-notifs", l:"Notifications"},{id:"t-compte", l:"Mon compte"}];
+const TVIEWS = [{id:"t-accueil", l:"Mon tableau de bord"},{id:"t-hebdo", l:"Rapport de la semaine"},{id:"t-rapports", l:"Mes rapports"},{id:"t-etudiants", l:"Mes étudiants"},{id:"t-consignes", l:"Consignes"},{id:"t-delegues", l:"Délégués de mon groupe"},{id:"t-taches", l:"Tâches"},{id:"t-reunions", l:"Réunions"},{id:"t-organigramme", l:"Organigramme"},{id:"t-classement", l:"Classement"},{id:"t-notifs", l:"Notifications"},{id:"t-compte", l:"Mon compte"}];
 function tview(){ const h = location.hash.slice(1); return TVIEWS.some(v=>v.id===h) ? h : "t-accueil"; }
 const mesRapports = () => S.T.rapports.filter(r=>r.doc===S.uid);
 function renderTuteur(main){
   const v = tview();
-  navigation(TVIEWS.map(x=>({id:x.id, l:x.l, n:x.id==="t-notifs"?nonLues().length:x.id==="t-consignes"?consignesNonLues():0})), v, principauxDe("tuteur"));
+  navigation(TVIEWS.map(x=>({id:x.id, l:x.l, n:x.id==="t-delegues"?S.rapportsDelegues.filter(r=>r.statut==="Soumis" && mesVisas(r).some(k=>!r.visas?.[k])).length:x.id==="t-notifs"?nonLues().length:x.id==="t-consignes"?consignesNonLues():0})), v, principauxDe("tuteur"));
   if (v==="t-consignes"){ main.innerHTML = vConsignes(); bindConsignes(); return; }
+  if (v==="t-delegues"){ main.innerHTML = vDelegues(); bindDelegues(); return; }
   if (v==="t-taches"){ main.innerHTML = vTaches(); bindTaches(); return; }
   if (v==="t-reunions"){ main.innerHTML = vReunions(); bindReunions(); return; }
   if (v==="t-organigramme"){ main.innerHTML = vOrganigramme(); bindOrganigramme(); return; }
@@ -1389,7 +1393,7 @@ function formCompte(uid, pre){
       <p class="hint">Chaque fonction donne automatiquement le rôle correspondant dans l'application. Les responsables de commission attribuent des tâches et convoquent des réunions pour leur commission uniquement.</p></fieldset>
     <label class="f" for="c_r">Rôle principal (espace affiché à la connexion)<select id="c_r">${opts(rolesListe.map(([k,r])=>[k,r.l]), c.role)}</select></label>
     <details ${(c.rolesSup||[]).length?"open":""}><summary class="small">Rôles supplémentaires (cumul de fonctions)</summary><div class="checks">${rolesListe.map(([k,r])=>`<label><input type="checkbox" name="c_rs" value="${k}" ${(c.rolesSup||[]).includes(k)?"checked":""}> ${esc(r.l)}</label>`).join("")}</div></details>
-    <div class="g2" id="c_tw"><label class="f" for="c_sp">Spécialité encadrée (tuteur)<select id="c_sp">${opts(SPECS_FORM, c.specialite, "—")}</select></label><label class="f" for="c_nv">Niveau encadré<select id="c_nv">${opts(["Licence 1","Licence 2","Licence 3"], c.niveau)}</select></label></div>
+    <div class="g2" id="c_tw"><label class="f" for="c_sp">Spécialité (tuteur ou délégué)<select id="c_sp">${opts(SPECS_FORM, c.specialite, "—")}</select></label><label class="f" for="c_nv">Niveau<select id="c_nv">${opts(["Licence 1","Licence 2","Licence 3"], c.niveau)}</select></label></div>
     ${isNew?"":`<label class="row small"><input type="checkbox" id="c_a" ${c.actif!==false?"checked":""}> Accès actif (décocher pour bloquer immédiatement ce compte)</label>`}
     <p class="small" id="c_err" style="color:var(--bad)" role="alert"></p>
     <div class="row"><button class="btn primary" id="c_ok">${isNew?"Ajouter":"Enregistrer"}</button><button class="btn" data-close>Annuler</button></div>`);
@@ -1401,7 +1405,7 @@ function formCompte(uid, pre){
   };
   dessineF();
   $("#c_fadd").onclick = () => { F.push({code:"MEMBRE", com:null}); dessineF(); };
-  const upR = () => { $("#c_tw").hidden = !($("#c_r").value==="tuteur" || [...$("#sheet").querySelectorAll('input[name="c_rs"]:checked')].some(i=>i.value==="tuteur") || F.some(f=>f.code==="TUTEUR")); };
+  const upR = () => { const g = ["tuteur","delegue"]; $("#c_tw").hidden = !(g.includes($("#c_r").value) || [...$("#sheet").querySelectorAll('input[name="c_rs"]:checked')].some(i=>g.includes(i.value)) || F.some(f=>["TUTEUR","DELEGUE"].includes(f.code))); };
   $("#c_r").onchange = upR; $("#sheet").querySelectorAll('input[name="c_rs"]').forEach(i=>i.onchange=upR); upR();
   $("#c_ok").onclick = async () => {
     const data = {nom:$("#c_n").value.trim().replace(/\s+/g," "), role:$("#c_r").value, majLe:nowISO()};
@@ -1415,7 +1419,7 @@ function formCompte(uid, pre){
     data.fonctions = fonctions;
     data.commissions = [...new Set(fonctions.map(f=>f.com).filter(Boolean))];
     data.commissionsResp = [...new Set(fonctions.filter(f=>f.code==="RESP_COM").map(f=>f.com).filter(Boolean))];
-    if (rolesDe(data).includes("tuteur")){ data.specialite = $("#c_sp").value; data.niveau = $("#c_nv").value; }
+    if (rolesDe(data).some(r=>["tuteur","delegue"].includes(r))){ data.specialite = $("#c_sp").value; data.niveau = $("#c_nv").value; if (!data.specialite){ $("#c_err").textContent = "Indiquez la spécialité et le niveau (tuteur ou délégué)."; return; } }
     const resume = [ROLES[data.role].l, ...data.rolesSup.map(r=>ROLES[r].l)].join(" + ");
     if (!isNew){
       data.actif = $("#c_a").checked;
@@ -1565,6 +1569,7 @@ const ICO = (() => {
     catalogue: s('<path d="M4 5a2 2 0 0 1 2-2h12v16H6a2 2 0 0 0-2 2z"/><path d="M4 19V5"/><path d="M9 7h6"/>'),
     hebdo: s('<rect x="3" y="5" width="18" height="16" rx="2"/><path d="M3 10h18M8 3v4M16 3v4"/><path d="M8 15h5"/>'),
     messages: s('<path d="M20.5 11.6a8.4 8.4 0 0 1-12.4 7.4L3.5 20.5l1.6-4.4a8.4 8.4 0 1 1 15.4-4.5z"/><path d="M9 9.5c.3 2 2.2 4.2 5.2 5l1-1.2-1.6-1-.8.6c-.9-.4-1.8-1.3-2.2-2.2l.6-.8-1-1.6z"/>'),
+    delegues: s('<circle cx="12" cy="7" r="3.5"/><path d="M5 21c.8-4 3.5-6 7-6s6.2 2 7 6"/><path d="m17.5 3 .9 1.8 2 .3-1.4 1.4.3 2-1.8-.9-1.8.9.3-2-1.4-1.4 2-.3z"/>'),
     taches: s('<rect x="4" y="3" width="16" height="18" rx="2"/><path d="m8 9 2 2 4-4M8 16h8"/>'),
     decisions: s('<path d="M5 21V4M5 4h11l-2 4 2 4H5"/>'),
     reunions: s('<circle cx="8" cy="9" r="3"/><circle cx="16" cy="9" r="3"/><path d="M2.5 19c.6-3 2.8-4.5 5.5-4.5S12.9 16 13.5 19M10.5 19c.6-3 2.8-4.5 5.5-4.5s4.9 1.5 5.5 4.5"/>'),
@@ -1581,7 +1586,7 @@ function navigation(items, courant, principaux){
   $("#tabs").innerHTML = items.map(x=>`<a href="#${x.id}" ${x.id===courant?'aria-current="page"':""}>${esc(x.l)}${x.n?` (${x.n})`:""}</a>`).join("");
   const bn = $("#bnav"); bn.hidden = false;
   const pr = principaux.map(id=>items.find(x=>x.id===id)).filter(Boolean).slice(0,4);
-  const court = l => ({"Tableau de bord":"Accueil","Tableau général":"Accueil","Mon espace":"Accueil","Mon tableau de bord":"Accueil","Alertes et notifications":"Alertes","Notifications":"Alertes","Registre des encaissements":"Registre","Suivi des cotisations":"Cotisations","Suivi pédagogique":"Pédagogie","Rapports des tuteurs":"Tutorat","Mes consignes":"Consignes","Nouveau rapport":"Rapport","Mes rapports":"Rapports","Mes dépôts à la caisse":"Dépôts","WhatsApp étudiants":"WhatsApp","Suivi des étudiants":"Suivi","Synthèses et rapports":"Synthèses","Catalogue des formations":"Catalogue","Rapport de la semaine":"Rapport","Mes étudiants":"Étudiants","Journal d'audit":"Audit"}[l] || l);
+  const court = l => ({"Tableau de bord":"Accueil","Tableau général":"Accueil","Mon espace":"Accueil","Mon tableau de bord":"Accueil","Alertes et notifications":"Alertes","Notifications":"Alertes","Registre des encaissements":"Registre","Suivi des cotisations":"Cotisations","Suivi pédagogique":"Pédagogie","Rapports des tuteurs":"Tutorat","Mes consignes":"Consignes","Nouveau rapport":"Rapport","Mes rapports":"Rapports","Mes dépôts à la caisse":"Dépôts","WhatsApp étudiants":"WhatsApp","Suivi des étudiants":"Suivi","Synthèses et rapports":"Synthèses","Catalogue des formations":"Catalogue","Rapport de la semaine":"Rapport","Mes étudiants":"Étudiants","Journal d'audit":"Audit","Délégués de spécialité":"Délégués"}[l] || l);
   const lien = x => `<a href="#${x.id}" ${x.id===courant?'aria-current="page"':""}>${icoDe(x.id)}<span>${esc(court(x.l))}</span>${x.n?`<b class="nb">${x.n>99?"99+":x.n}</b>`:""}</a>`;
   const p3 = pr.slice(0,3);
   bn.innerHTML = p3.slice(0,2).map(lien).join("") + `<button type="button" class="fab" id="bFab" aria-label="Actions rapides">${ICO.nouveau}</button>` + (p3[2] ? lien(p3[2]) : "<span></span>")
@@ -1601,6 +1606,7 @@ function principauxDe(r){
     tresorerie:["accueil","consignes","cotisations","notifications"], formation:["accueil","catalogue","pedagogie","consignes"],
     pedagogie:["accueil","pedagogie","catalogue","messages"], secretaire:["accueil","suivi","synthese","consignes"],
     tuteur:["t-accueil","t-hebdo","t-rapports","t-consignes"],
+    delegue:["accueil","delegues","taches","consignes"],
     responsable:["accueil","taches","reunions","consignes"], membre:["accueil","taches","reunions","consignes"]
   })[r] || ["accueil","taches","consignes","notifications"];
 }
@@ -2883,6 +2889,9 @@ function actionsRapides(){
     can("peda.saisir") && ["Pointer une séance", ICO.pedagogie, () => formSeance()],
     r==="formation" && ["Nouvelle formation", ICO.catalogue, () => formFormation()],
     presidence() && ["Donner une consigne", ICO.consignes, () => formConsigne()],
+    estDelegue() && !presidence() && ["Demande de cours", ICO.delegues, () => formDemandeCours("demande")],
+    estDelegue() && !presidence() && ["Déposer un cours à expliquer", ICO.catalogue, () => formDemandeCours("cours")],
+    estDelegue() && !presidence() && ["Rapport de la semaine", ICO.hebdo, () => formRapportDelegue()],
     presidence() && ["Nouvelle décision", ICO.decisions, () => formDecision()],
     peutCreerTache() && ["Attribuer une tâche", ICO.taches, () => formTache()],
     peutConvoquer() && ["Programmer une réunion", ICO.reunions, () => formReunion()],
@@ -2970,6 +2979,7 @@ const FONCTIONS = {
   ENCADREMENT:{t:"Encadrement", r:"membre", rang:20},
   MEMBRE:{t:"Membre d'équipe", r:"membre", rang:21},
   FORMATEUR:{t:"Formateur de l'Académie", r:"pedagogie", rang:30},
+  DELEGUE:{t:"Délégué de spécialité", r:"delegue", rang:32},
   TUTEUR:{t:"Tuteur", r:"tuteur", rang:31}
 };
 const roleDeFonction = f => f.code==="RESP_COM" ? ({FORMATION:"formation", TUTORAT:"tuteurs", CAISSE:"caisse"}[f.com] || "responsable") : FONCTIONS[f.code]?.r;
@@ -3371,6 +3381,273 @@ function abonnerGouv(){
   sub("reunions","reunions", fusion("reunions","conv"), db.collection("reunions").where("convoques","array-contains",S.email));
 }
 
+/* =====================================================================
+   DÉLÉGUÉS DE SPÉCIALITÉ
+   Demandes de cours, cours à faire expliquer (dépôt du lundi), rapport
+   hebdomadaire de la spécialité (4 visas de contrôle), notation des tuteurs.
+   ===================================================================== */
+const groupeDe = c => `${c?.specialite||""} · ${c?.niveau||""}`;
+const groupeLib = g => { const [sp, nv] = String(g||"").split(" · "); return `${codeSp(sp)} ${nv||""}`.trim(); };
+const semCourante = () => lundiDe(today());
+const estDelegue = () => tousMesRoles().includes("delegue");
+const estTuteurR = () => tousMesRoles().includes("tuteur");
+const supDelegues = () => aRole("formation","tuteurs","accompagnement","secretaire","vicepresident");
+const voitNotesTut = () => aRole("tuteurs","secretaire","vicepresident");
+const tuteursDuGroupe = g => actifsTous().filter(c => rolesDe(c).includes("tuteur") && groupeDe(c)===g);
+const deleguesActifs = () => actifsTous().filter(c => rolesDe(c).includes("delegue"));
+/* Visas de contrôle du rapport hebdomadaire : les 4 contrôleurs prévus */
+const VISAS = [["tuteur","Tuteur du groupe"],["tuteurs","Responsable des Tuteurs"],["accompagnement","Responsable Suivi et Accompagnement"],["formation","Responsable Formation"]];
+const mesVisas = r => VISAS.map(v=>v[0]).filter(k => k==="tuteur" ? (estTuteurR() && r.groupe===groupeDe(compte())) : (!presidence() && tousMesRoles().includes(k)));
+const nbVisas = r => VISAS.filter(([k])=>r.visas?.[k]).length;
+const CRIT_TUT = [["ponctualite","Ponctualité et régularité des séances"],["clarte","Clarté des explications"],["disponibilite","Disponibilité et écoute"],["suivi","Suivi des difficultés du groupe"]];
+const DC_ST = ["Soumise","Prise en charge","Traitée","Refusée"];
+const dcType = t => t==="cours" ? "Cours à expliquer" : "Demande de cours";
+
+function etatDelegue(){
+  const sem = semCourante(), moi = S.email;
+  const rap = S.rapportsDelegues.find(r=>r.delegueEmail===moi && r.semaine===sem);
+  const cours = S.demandesCours.filter(d=>d.delegueEmail===moi && d.type==="cours" && d.semaine===sem);
+  const tuts = tuteursDuGroupe(groupeDe(compte()));
+  const notes = S.notesTuteurs.filter(n=>n.delegueEmail===moi && n.semaine===sem);
+  return {sem, rap, cours, tuts, notes, resteNotes: tuts.filter(t=>!notes.some(n=>n.tuteurEmail===t.em))};
+}
+
+function vDelegues(){
+  const del = estDelegue() && !presidence(), sup = supDelegues(), tut = estTuteurR() && !sup;
+  const onglets = [["demandes","Demandes de cours"],["cours","Cours à expliquer"],["rapports","Rapports hebdomadaires"], ...((del || voitNotesTut()) ? [["notes", del ? "Noter les tuteurs" : "Notes des tuteurs"]] : [])];
+  const sub = onglets.some(o=>o[0]===S.sub.delegues) ? S.sub.delegues : "demandes";
+  const monG = groupeDe(compte());
+  const filtre = L => del && !sup ? L.filter(x=>x.delegueEmail===S.email) : tut ? L.filter(x=>x.groupe===monG) : L;
+  let body = "";
+  if (sub==="demandes" || sub==="cours"){
+    const type = sub==="cours" ? "cours" : "demande";
+    const L = filtre(S.demandesCours).filter(d=>(d.type||"demande")===type).sort((a,b)=>String(b.creeLe).localeCompare(String(a.creeLe)));
+    const att = L.filter(d=>d.statut==="Soumise").length;
+    body = `<div class="spread"><p class="small muted">${type==="cours"?"Chaque lundi, le délégué dépose les cours que son groupe veut se faire expliquer, avec le détail des points à traiter.":"Les demandes de cours formulées par les délégués selon les besoins de leur groupe."}</p>${del?`<button class="btn primary" id="newDC" data-type="${type}">${ICO.nouveau} ${type==="cours"?"Déposer un cours":"Nouvelle demande"}</button>`:""}</div>
+      <div class="kpis">${kpi(att,"en attente de prise en charge",att?"warn":"g")}${kpi(L.filter(d=>d.statut==="Prise en charge").length,"prises en charge")}${kpi(L.filter(d=>d.statut==="Traitée").length,"traitées","g")}</div>
+      ${L.length?`<div class="clist">${L.map(d=>`<button class="citem ${d.statut==="Traitée"?"done":""}" data-dc="${esc(d.id)}"><span class="t">${d.urgence==="Urgente"?'<span class="pill bad">Urgent</span> ':""}${esc(d.matiere)}</span>
+        <span class="m"><span class="pill ${({"Traitée":"ok","Refusée":"mute","Soumise":"warn"})[d.statut]||""}">${esc(d.statut)}</span><span>${esc(groupeLib(d.groupe))}</span><span>· ${esc(d.delegueNom)}</span><span>· ${dFR(String(d.creeLe).slice(0,10))}</span>${d.lien?"<span>· 📎 document</span>":""}</span></button>`).join("")}</div>`:`<div class="empty">${type==="cours"?"Aucun cours déposé.":"Aucune demande de cours."}</div>`}`;
+  }
+  if (sub==="rapports"){
+    const L = filtre(S.rapportsDelegues).filter(r=>r.statut!=="Brouillon" || r.delegueEmail===S.email).sort((a,b)=>String(b.semaine).localeCompare(String(a.semaine)));
+    const mv = r => mesVisas(r).filter(k=>!r.visas?.[k]);
+    const aViser = L.filter(r=>r.statut==="Soumis" && mv(r).length);
+    const sem = semCourante(), manquants = sup ? deleguesActifs().filter(c=>!S.rapportsDelegues.some(r=>r.delegueEmail===c.em && r.semaine===addJ(sem,-7) && r.statut!=="Brouillon")) : [];
+    body = `<div class="spread"><p class="small muted">Rapport hebdomadaire de chaque délégué sur sa spécialité. Il est contrôlé par le tuteur du groupe, le Responsable des Tuteurs, le Responsable Suivi et Accompagnement et le Responsable Formation.</p>${del?`<button class="btn primary" id="newRD">${ICO.nouveau} Rapport de la semaine</button>`:""}</div>
+      ${!del||sup?`<div class="kpis">${kpi(aViser.length,"à contrôler par moi",aViser.length?"warn":"g")}${kpi(L.filter(r=>r.statut==="Soumis" && nbVisas(r)===4).length,"contrôlés par les 4")}${sup?kpi(manquants.length,`délégué(s) sans rapport (${semLib(addJ(sem,-7)).replace("semaine du ","sem. du ")})`,manquants.length?"bad":"g"):""}</div>${manquants.length?`<p class="small muted">Sans rapport : ${esc(manquants.map(c=>`${c.nom} (${groupeLib(groupeDe(c))})`).join(", "))}</p>`:""}`:""}
+      ${L.length?`<div class="clist">${L.map(r=>`<button class="citem ${r.statut==="Retourné"?"late":""}" data-rd="${esc(r.id)}"><span class="t">${esc(groupeLib(r.groupe))} · ${esc(semLib(r.semaine))}</span>
+        <span class="m"><span class="pill ${({"Retourné":"bad","Brouillon":"mute"})[r.statut]||""}">${esc(r.statut)}</span><span class="pill ${nbVisas(r)===4?"ok":""}">${nbVisas(r)}/4 visas</span><span>${esc(r.delegueNom)}</span>${mv(r).length&&r.statut==="Soumis"?'<span class="pill warn">À contrôler</span>':""}</span></button>`).join("")}</div>`:`<div class="empty">Aucun rapport de délégué.</div>`}`;
+  }
+  if (sub==="notes"){
+    if (del && !voitNotesTut()){
+      const E = etatDelegue();
+      body = `<p class="small muted">Chaque semaine, notez les tuteurs de votre groupe (${esc(groupeLib(monG))}). Vos notes sont lues par le Responsable des Tuteurs, le Secrétariat général et la Présidence ; les tuteurs ne voient pas votre note individuelle.</p>
+        ${E.tuts.length?E.tuts.map(t=>{ const n = E.notes.find(x=>x.tuteurEmail===t.em); return `<div class="prow"><span><b>${esc(t.nom)}</b><br><span class="small muted">${esc(semLib(E.sem))}</span></span>${n?`<span class="pill ok">${String(n.note.toFixed(1)).replace(".",",")} /5</span> <button class="btn sm ghost" data-nt="${esc(t.em)}">Modifier</button>`:`<button class="btn sm primary" data-nt="${esc(t.em)}">Noter</button>`}</div>`; }).join(""):`<div class="empty">Aucun tuteur n'est rattaché à votre groupe (${esc(groupeLib(monG))}). Signalez-le au Responsable des Tuteurs.</div>`}
+        <h3>Mes notes précédentes</h3>${S.notesTuteurs.filter(n=>n.delegueEmail===S.email && n.semaine!==E.sem).sort((a,b)=>String(b.semaine).localeCompare(String(a.semaine))).slice(0,12).map(n=>`<div class="prow"><span>${esc(n.tuteurNom)} <span class="small muted">· ${esc(semLib(n.semaine))}</span></span><span class="pill">${String(n.note.toFixed(1)).replace(".",",")} /5</span></div>`).join("") || '<p class="small muted">Aucune.</p>'}`;
+    } else {
+      const par = {}; for (const n of S.notesTuteurs){ const t = (par[n.tuteurEmail] ||= {nom:n.tuteurNom, groupe:n.groupe, n:0, s:0, c:{}, der:null, com:[]}); t.n++; t.s += n.note; for (const [k] of CRIT_TUT) t.c[k] = (t.c[k]||0) + (Number(n.criteres?.[k])||0); if (!t.der || n.semaine > t.der) t.der = n.semaine; if (n.commentaire) t.com.push(n); }
+      const L = Object.entries(par).sort((a,b)=>a[1].s/a[1].n - b[1].s/b[1].n);
+      body = `<p class="small muted">Notes hebdomadaires données aux tuteurs par les délégués de spécialité (moyenne sur 5). Les tuteurs les moins bien notés apparaissent en premier.</p>
+        ${L.length?`<div class="tablewrap"><table><thead><tr><th>Tuteur</th><th>Groupe</th><th class="r">Moyenne</th>${CRIT_TUT.map(([,l])=>`<th class="r small">${esc(l.split(" ")[0])}</th>`).join("")}<th class="r">Notes</th><th>Dernière</th></tr></thead><tbody>${L.map(([em,t])=>`<tr class="click" data-ntv="${esc(em)}"><td><b>${esc(t.nom)}</b></td><td class="small">${esc(groupeLib(t.groupe))}</td><td class="r"><span class="pill ${t.s/t.n<2.5?"bad":t.s/t.n<3.5?"warn":"ok"}">${(t.s/t.n).toFixed(1).replace(".",",")}</span></td>${CRIT_TUT.map(([k])=>`<td class="r">${(t.c[k]/t.n).toFixed(1).replace(".",",")}</td>`).join("")}<td class="r">${t.n}</td><td class="small">${dFR(t.der)}</td></tr>`).join("")}</tbody></table></div>`:`<div class="empty">Aucune note pour l'instant.</div>`}`;
+    }
+  }
+  return `<h2>${del&&!sup?"Mon espace délégué":"Délégués de spécialité"}</h2>${del&&!sup?`<p class="small muted">${esc(groupeLib(monG) || "Groupe non renseigné")}</p>`:""}
+    <div class="subtabs" role="group" aria-label="Délégués">${onglets.map(([k,l])=>`<button data-dsub="${k}" aria-pressed="${sub===k}">${l}</button>`).join("")}</div>${body}`;
+}
+function bindDelegues(){
+  const M = $("#main");
+  M.querySelectorAll("[data-dsub]").forEach(b => b.onclick = () => { S.sub.delegues = b.dataset.dsub; render(); });
+  $("#newDC") && ($("#newDC").onclick = () => formDemandeCours($("#newDC").dataset.type));
+  $("#newRD") && ($("#newRD").onclick = () => formRapportDelegue());
+  M.querySelectorAll("[data-dc]").forEach(b => b.onclick = () => ficheDemandeCours(b.dataset.dc));
+  M.querySelectorAll("[data-rd]").forEach(b => b.onclick = () => ficheRapportDelegue(b.dataset.rd));
+  M.querySelectorAll("[data-nt]").forEach(b => b.onclick = () => formNoteTuteur(b.dataset.nt));
+  M.querySelectorAll("[data-ntv]").forEach(b => b.onclick = () => ficheNotesTuteur(b.dataset.ntv));
+}
+
+/* ---------------- Demandes de cours et cours à expliquer ---------------- */
+function formDemandeCours(type){
+  const c = compte(), cours = type==="cours";
+  if (!c.specialite) return toast("Votre spécialité n'est pas renseignée : demandez à la Présidence de compléter votre compte.");
+  openSheet(`<h2>${cours?"Déposer un cours à expliquer":"Nouvelle demande de cours"}</h2><p class="small muted">${esc(groupeLib(groupeDe(c)))} · ${esc(semLib(semCourante()))}</p>
+    <label class="f" for="dc_m">${cours?"Cours / matière concerné(e)":"Cours demandé"}<input type="text" id="dc_m" maxlength="120" placeholder="Ex. : Algorithmique — les boucles"></label>
+    <label class="f" for="dc_b">${cours?"Points à expliquer, en détail":"Besoin du groupe"}<textarea id="dc_b" maxlength="3000" style="min-height:140px" placeholder="${cours?"Chapitres, pages, exercices précis, ce qui n'a pas été compris…":"Pourquoi ce cours, ce que le groupe attend, le niveau actuel…"}"></textarea></label>
+    <label class="f" for="dc_l">Lien vers le document du cours${cours?"":" (facultatif)"}<input type="url" id="dc_l" maxlength="500" placeholder="https://drive.google.com/…"><span class="hint">Déposez le fichier (PDF, photo, document) dans Google Drive, choisissez « Partager › Toute personne disposant du lien », puis collez le lien ici.</span></label>
+    <div class="g2"><label class="f" for="dc_n">Étudiants concernés<input type="number" id="dc_n" min="1" max="500"></label><label class="f" for="dc_u">Urgence<select id="dc_u">${opts(["Normale","Urgente"],"Normale")}</select></label></div>
+    <label class="f" for="dc_d">Date souhaitée (facultatif)<input type="date" id="dc_d" min="${today()}"></label>
+    <div class="row"><button class="btn primary" id="dc_ok">Envoyer</button><button class="btn" data-close>Annuler</button></div>`);
+  $("#dc_ok").onclick = async () => {
+    const matiere = $("#dc_m").value.trim(), besoin = $("#dc_b").value.trim(), lien = $("#dc_l").value.trim();
+    if (!matiere) return toast("Indiquez le cours concerné.");
+    if (besoin.length < 20) return toast("Détaillez le besoin (au moins une ou deux phrases).");
+    if (cours && !lien) return toast("Collez le lien vers le document du cours.");
+    if (lien && !/^https?:\/\//i.test(lien)) return toast("Le lien doit commencer par https://");
+    const id = gid("DC"), g = groupeDe(c);
+    const data = {type:cours?"cours":"demande", matiere, besoin, lien, nbEtudiants:Number($("#dc_n").value)||null, urgence:$("#dc_u").value, dateSouhaitee:$("#dc_d").value||"", semaine:semCourante(), groupe:g, specialite:c.specialite, niveau:c.niveau||"", delegueEmail:S.email, delegueNom:c.nom, statut:"Soumise", reponse:"", creeLe:nowISO(), historique:[trace("Soumission","Soumise")]};
+    if (await write(()=>S.db.doc("demandes_cours/"+id).set(data), cours?"Cours déposé":"Demande envoyée")){
+      log("delegue", `${cours?"Cours à expliquer":"Demande de cours"} · ${groupeLib(g)} : ${matiere}`, ["formation","tuteurs","accompagnement", ...tuteursDuGroupe(g).map(t=>"e:"+t.em)]);
+      closeSheet();
+    }
+  };
+}
+function ficheDemandeCours(id){
+  const d = S.demandesCours.find(x=>x.id===id); if (!d) return toast("Introuvable.");
+  const traite = aRole("formation","tuteurs") || (estTuteurR() && d.groupe===groupeDe(compte()));
+  const ouverte = ["Soumise","Prise en charge"].includes(d.statut);
+  openSheet(`<div class="spread"><h2>${esc(d.matiere)}</h2><span class="pill">${esc(d.statut)}</span></div>
+    <p class="small muted">${esc(dcType(d.type))} · ${esc(groupeLib(d.groupe))} · ${esc(d.delegueNom)} · ${dtFR(d.creeLe)}</p>
+    <div class="quote">${esc(d.besoin)}</div>
+    <dl class="dl">${d.nbEtudiants?`<dt>Étudiants concernés</dt><dd>${esc(d.nbEtudiants)}</dd>`:""}<dt>Urgence</dt><dd>${esc(d.urgence)}</dd>${d.dateSouhaitee?`<dt>Date souhaitée</dt><dd>${dFR(d.dateSouhaitee)}</dd>`:""}</dl>
+    ${d.lien?`<div class="row"><a class="btn" href="${esc(d.lien)}" target="_blank" rel="noopener noreferrer">📎 Ouvrir le document</a></div>`:""}
+    ${d.reponse?`<h3>Réponse</h3><div class="quote">${esc(d.reponse)}</div>`:""}
+    ${traite && ouverte?`<label class="f" for="dc_r">Réponse au délégué<textarea id="dc_r" maxlength="1500" placeholder="Qui assure le cours, quand, où ; ou le motif du refus.">${esc(d.reponse||"")}</textarea></label>
+      <div class="row">${d.statut==="Soumise"?`<button class="btn primary" data-dcs="Prise en charge">Prendre en charge</button>`:""}<button class="btn vert" data-dcs="Traitée">Marquer comme traitée</button>${aRole("formation","tuteurs")?`<button class="btn danger" data-dcs="Refusée">Refuser</button>`:""}</div>`:""}
+    <details><summary class="small">Historique</summary>${(d.historique||[]).map(h=>`<div class="small">${dtFR(h.le)} · ${esc(h.par)} (${esc(h.fonction)}) · ${esc(h.action)}${h.obs?` : ${esc(h.obs)}`:""}</div>`).join("")}</details>
+    <div class="row"><button class="btn ghost" data-close>Fermer</button></div>`);
+  $("#sheet").querySelectorAll("[data-dcs]").forEach(b => b.onclick = async () => {
+    const st = b.dataset.dcs, rep = $("#dc_r").value.trim();
+    if (st!=="Prise en charge" && rep.length < 5) return toast(st==="Refusée" ? "Indiquez le motif du refus." : "Indiquez comment la demande a été traitée.");
+    if (await write(()=>S.db.doc("demandes_cours/"+id).update({statut:st, reponse:rep, majLe:nowISO(), historique:ajoute(d.historique, trace(st, st, rep))}), "Demande mise à jour")){
+      log("delegue", `${dcType(d.type)} « ${d.matiere} » : ${st.toLowerCase()}`, ["e:"+d.delegueEmail]); closeSheet();
+    }
+  });
+}
+
+/* ---------------- Rapport hebdomadaire du délégué ---------------- */
+const RD_CHAMPS = [["cours","Cours suivis cette semaine et avancement","Matières vues, chapitres, devoirs et évaluations en cours."],["besoins","Besoins du groupe","Cours à expliquer, ressources, matériel, connexion…"],["difficultes","Difficultés rencontrées","Matières difficiles, étudiants en difficulté ou absents (sans détail personnel sensible)."],["tutorat","Déroulement du tutorat","Séances tenues ou non, participation, ce qui a bien ou mal fonctionné."],["propositions","Propositions du groupe","Ce que le groupe suggère pour la semaine prochaine."]];
+function formRapportDelegue(r){
+  const c = compte(), sem = r?.semaine || semCourante();
+  if (!c.specialite) return toast("Votre spécialité n'est pas renseignée : demandez à la Présidence de compléter votre compte.");
+  const ex = r || S.rapportsDelegues.find(x=>x.delegueEmail===S.email && x.semaine===sem);
+  if (ex && !["Brouillon","Retourné"].includes(ex.statut)) return ficheRapportDelegue(ex.id);
+  const retour = ex?.statut==="Retourné" ? (ex.historique||[]).filter(h=>h.statut==="Retourné").pop() : null;
+  openSheet(`<h2>Rapport de la ${esc(semLib(sem))}</h2><p class="small muted">${esc(groupeLib(groupeDe(c)))}</p>
+    ${retour?`<div class="banner"><b>Rapport retourné par ${esc(retour.par)}</b> : ${esc(retour.obs)}</div>`:""}
+    <div class="g2"><label class="f" for="rd_e">Effectif du groupe<input type="number" id="rd_e" min="1" max="500" value="${esc(ex?.effectif||"")}"></label><label class="f" for="rd_p">Étudiants actifs cette semaine<input type="number" id="rd_p" min="0" max="500" value="${esc(ex?.actifs??"")}"></label></div>
+    <label class="f" for="rd_a">Ambiance et motivation du groupe<select id="rd_a">${opts(Object.entries(PARTICIPATION).map(([k,l])=>[k,`${k} · ${l}`]), ex?.ambiance||3)}</select></label>
+    ${RD_CHAMPS.map(([k,l,ph])=>`<label class="f" for="rd_${k}">${l}<textarea id="rd_${k}" maxlength="2500" placeholder="${esc(ph)}">${esc(ex?.[k]||"")}</textarea></label>`).join("")}
+    <label class="f" for="rd_l">Lien vers une pièce jointe (facultatif)<input type="url" id="rd_l" maxlength="500" value="${esc(ex?.lien||"")}" placeholder="https://drive.google.com/…"></label>
+    <div class="row"><button class="btn primary" id="rd_ok">Soumettre le rapport</button><button class="btn" id="rd_br">Enregistrer le brouillon</button><button class="btn ghost" data-close>Annuler</button></div>`);
+  const envoyer = async statut => {
+    const data = {semaine:sem, groupe:groupeDe(c), specialite:c.specialite, niveau:c.niveau||"", delegueEmail:S.email, delegueNom:c.nom, effectif:Number($("#rd_e").value)||null, actifs:$("#rd_p").value===""?null:Number($("#rd_p").value), ambiance:Number($("#rd_a").value), lien:$("#rd_l").value.trim(), statut, visas:{}, creeLe:ex?.creeLe||nowISO(), majLe:nowISO(), historique:ajoute(ex?.historique, trace(statut==="Soumis"?(ex?.statut==="Retourné"?"Nouvelle soumission":"Soumission"):"Brouillon", statut))};
+    for (const [k] of RD_CHAMPS) data[k] = $("#rd_"+k).value.trim();
+    if (statut==="Soumis"){
+      if (!data.effectif) return toast("Indiquez l'effectif du groupe.");
+      if (data.cours.length < 15 || data.besoins.length < 15) return toast("Renseignez au moins les cours suivis et les besoins du groupe.");
+      if (data.lien && !/^https?:\/\//i.test(data.lien)) return toast("Le lien doit commencer par https://");
+    }
+    if (await write(()=>S.db.doc(`rapports_delegues/${S.email}_${sem}`).set(data), statut==="Soumis"?"Rapport soumis pour contrôle":"Brouillon enregistré")){
+      if (statut==="Soumis") log("delegue", `Rapport du délégué ${c.nom} · ${groupeLib(data.groupe)} · ${semLib(sem)} à contrôler`, ["tuteurs","accompagnement","formation", ...tuteursDuGroupe(data.groupe).map(t=>"e:"+t.em)]);
+      closeSheet();
+    }
+  };
+  $("#rd_ok").onclick = () => envoyer("Soumis"); $("#rd_br").onclick = () => envoyer("Brouillon");
+}
+function ficheRapportDelegue(id){
+  const r = S.rapportsDelegues.find(x=>x.id===id); if (!r) return toast("Rapport introuvable.");
+  const moi = r.delegueEmail===S.email;
+  if (moi && ["Brouillon","Retourné"].includes(r.statut)) return formRapportDelegue(r);
+  const aFaire = r.statut==="Soumis" ? mesVisas(r).filter(k=>!r.visas?.[k]) : [];
+  openSheet(`<div class="spread"><h2>${esc(groupeLib(r.groupe))}</h2><span class="pill ${nbVisas(r)===4?"ok":""}">${esc(r.statut)} · ${nbVisas(r)}/4 visas</span></div>
+    <p class="small muted">Rapport de ${esc(r.delegueNom)} · ${esc(semLib(r.semaine))}</p>
+    <dl class="dl"><dt>Effectif</dt><dd>${esc(r.effectif??"—")}${r.actifs!=null?` · ${esc(r.actifs)} actifs cette semaine`:""}</dd><dt>Ambiance</dt><dd>${esc(r.ambiance)} /5 · ${esc(PARTICIPATION[r.ambiance]||"")}</dd></dl>
+    ${RD_CHAMPS.map(([k,l])=>r[k]?`<h3>${l}</h3><div class="quote">${esc(r[k])}</div>`:"").join("")}
+    ${r.lien?`<div class="row"><a class="btn" href="${esc(r.lien)}" target="_blank" rel="noopener noreferrer">📎 Pièce jointe</a></div>`:""}
+    <h3>Contrôle</h3>
+    ${VISAS.map(([k,l])=>{ const v = r.visas?.[k]; return `<div class="prow"><span><b>${l}</b>${v?`<br><span class="small muted">${esc(v.par)} · ${dtFR(v.le)}</span>${v.obs?`<br><span class="small">${esc(v.obs)}</span>`:""}`:""}</span><span class="pill ${v?"ok":"warn"}">${v?"Contrôlé":"En attente"}</span></div>`; }).join("")}
+    ${aFaire.length?`<label class="f" for="rd_o">Mes observations<textarea id="rd_o" maxlength="1500" placeholder="Obligatoire pour retourner le rapport."></textarea></label>
+      <div class="row"><button class="btn vert" id="rdVisa">Contrôlé : apposer mon visa${aFaire.length>1?` (${aFaire.length} fonctions)`:""}</button><button class="btn danger" id="rdRet">Retourner au délégué</button></div>`:""}
+    <details><summary class="small">Historique</summary>${(r.historique||[]).map(h=>`<div class="small">${dtFR(h.le)} · ${esc(h.par)} (${esc(h.fonction)}) · ${esc(h.action)}${h.obs?` : ${esc(h.obs)}`:""}</div>`).join("")}</details>
+    <div class="row"><button class="btn ghost" data-close>Fermer</button></div>`);
+  $("#rdVisa") && ($("#rdVisa").onclick = async () => {
+    const obs = $("#rd_o").value.trim(), visas = {...(r.visas||{})};
+    for (const k of aFaire) visas[k] = {par:compte().nom, email:S.email, le:nowISO(), obs};
+    if (await write(()=>S.db.doc("rapports_delegues/"+id).update({visas, historique:ajoute(r.historique, trace("Visa : "+aFaire.map(k=>VISAS.find(v=>v[0]===k)[1]).join(", "), "Soumis", obs))}), "Visa apposé")){
+      if (obs) log("delegue", `Observation sur votre rapport (${semLib(r.semaine)}) : ${obs}`, ["e:"+r.delegueEmail]); closeSheet();
+    }
+  });
+  $("#rdRet") && ($("#rdRet").onclick = async () => {
+    const obs = $("#rd_o").value.trim(); if (obs.length < 10) return toast("Expliquez ce qui doit être corrigé.");
+    if (await write(()=>S.db.doc("rapports_delegues/"+id).update({statut:"Retourné", historique:ajoute(r.historique, trace("Retour au délégué", "Retourné", obs))}), "Rapport retourné")){
+      log("delegue", `Votre rapport (${semLib(r.semaine)}) est retourné : ${obs}`, ["e:"+r.delegueEmail]); closeSheet();
+    }
+  });
+}
+
+/* ---------------- Notation hebdomadaire des tuteurs ---------------- */
+function formNoteTuteur(em){
+  const t = S.comptes[em], c = compte(), sem = semCourante(); if (!t) return;
+  const ex = S.notesTuteurs.find(n=>n.delegueEmail===S.email && n.tuteurEmail===em && n.semaine===sem);
+  openSheet(`<h2>Noter ${esc(t.nom)}</h2><p class="small muted">${esc(semLib(sem))} · de 1 (insuffisant) à 5 (excellent)</p>
+    ${CRIT_TUT.map(([k,l])=>`<label class="f" for="nt_${k}">${l}<select id="nt_${k}">${opts([1,2,3,4,5].map(v=>[v,`${v} · ${PARTICIPATION[v]}`]), ex?.criteres?.[k], "Choisir…")}</select></label>`).join("")}
+    <label class="f" for="nt_s">Séances tenues cette semaine<input type="number" id="nt_s" min="0" max="14" value="${esc(ex?.seances??"")}"></label>
+    <label class="f" for="nt_c">Commentaire<textarea id="nt_c" maxlength="1000" placeholder="Obligatoire si une note est inférieure à 3 : des faits précis.">${esc(ex?.commentaire||"")}</textarea></label>
+    <p class="hint">Notez au nom du groupe, sur des faits. Le tuteur ne voit pas votre note individuelle.</p>
+    <div class="row"><button class="btn primary" id="nt_ok">Enregistrer la note</button><button class="btn" data-close>Annuler</button></div>`);
+  $("#nt_ok").onclick = async () => {
+    const criteres = {}; for (const [k] of CRIT_TUT){ const v = Number($("#nt_"+k).value); if (!v) return toast("Notez chaque critère."); criteres[k] = v; }
+    const vals = Object.values(criteres), note = vals.reduce((a,b)=>a+b,0)/vals.length, commentaire = $("#nt_c").value.trim();
+    if (vals.some(v=>v<3) && commentaire.length < 15) return toast("Une note inférieure à 3 doit être justifiée par un commentaire précis.");
+    const tuteurKey = ek(em), data = {delegueEmail:S.email, delegueNom:c.nom, tuteurEmail:em, tuteurKey, tuteurNom:t.nom, groupe:groupeDe(c), semaine:sem, criteres, note, seances:$("#nt_s").value===""?null:Number($("#nt_s").value), commentaire, le:nowISO()};
+    if (await write(()=>S.db.doc(`notes_tuteurs/${S.email}_${tuteurKey}_${sem}`).set(data), "Note enregistrée")){
+      if (!ex) log("delegue", `Note hebdomadaire d'un tuteur par le délégué ${groupeLib(data.groupe)} : ${t.nom} ${note.toFixed(1).replace(".",",")}/5`, ["tuteurs"]);
+      closeSheet();
+    }
+  };
+}
+function ficheNotesTuteur(em){
+  const L = S.notesTuteurs.filter(n=>n.tuteurEmail===em).sort((a,b)=>String(b.semaine).localeCompare(String(a.semaine)));
+  openSheet(`<h2>${esc(L[0]?.tuteurNom||nomDe(em))}</h2><p class="small muted">Notes hebdomadaires des délégués</p>
+    ${L.map(n=>`<div class="card"><div class="spread"><b>${esc(semLib(n.semaine))}</b><span class="pill ${n.note<2.5?"bad":n.note<3.5?"warn":"ok"}">${n.note.toFixed(1).replace(".",",")} /5</span></div>
+      <p class="small muted">Par ${esc(n.delegueNom)} · ${esc(groupeLib(n.groupe))}${n.seances!=null?` · ${esc(n.seances)} séance(s) tenue(s)`:""}</p>
+      <p class="small">${CRIT_TUT.map(([k,l])=>`${esc(l.split(" ")[0])} ${esc(n.criteres?.[k]??"—")}`).join(" · ")}</p>${n.commentaire?`<div class="quote">${esc(n.commentaire)}</div>`:""}</div>`).join("")}
+    <div class="row"><button class="btn ghost" data-close>Fermer</button></div>`);
+}
+
+/* ---------------- Tableau de bord du délégué ---------------- */
+function vDashDelegue(){
+  const E = etatDelegue(), c = compte(), jour = (parseD(today()).getDay()+6)%7;
+  const ligne = (ok, titre, detail, sub, bouton) => `<div class="prow"><span><b>${ok?"✅":"⬜"} ${titre}</b><br><span class="small muted">${detail}</span></span><a class="btn sm ${ok?"ghost":"primary"}" href="#delegues" data-dgo="${sub}">${bouton}</a></div>`;
+  const ret = S.rapportsDelegues.find(r=>r.delegueEmail===S.email && r.statut==="Retourné");
+  return `${ret?`<div class="banner"><b>Rapport retourné</b> (${esc(semLib(ret.semaine))}) : corrigez-le et soumettez-le de nouveau. <a href="#delegues" data-dgo="rapports">Ouvrir</a></div>`:""}
+    <div class="card"><h3>Mes obligations de la ${esc(semLib(E.sem))}</h3><p class="small muted">Délégué · ${esc(groupeLib(groupeDe(c)) || "groupe non renseigné")}</p>
+    ${ligne(E.cours.length>0, "Cours à faire expliquer (dépôt du lundi)", E.cours.length ? `${E.cours.length} cours déposé(s) cette semaine` : jour===0 ? "À déposer aujourd'hui" : "Aucun cours déposé cette semaine", "cours", "Déposer")}
+    ${ligne(E.rap && E.rap.statut!=="Brouillon", "Rapport hebdomadaire de la spécialité", E.rap ? `${E.rap.statut}${E.rap.statut==="Soumis"?` · ${nbVisas(E.rap)}/4 visas`:""}` : "À soumettre avant dimanche soir", "rapports", E.rap?"Voir":"Rédiger")}
+    ${ligne(E.tuts.length>0 && !E.resteNotes.length, "Noter les tuteurs du groupe", E.tuts.length ? `${E.tuts.length-E.resteNotes.length}/${E.tuts.length} tuteur(s) noté(s)` : "Aucun tuteur rattaché à votre groupe", "notes", "Noter")}
+    </div>
+    <div class="card"><div class="spread"><h3>Mes demandes de cours</h3><a class="small" href="#delegues" data-dgo="demandes">Tout voir</a></div>
+    ${S.demandesCours.filter(d=>d.delegueEmail===S.email).sort((a,b)=>String(b.creeLe).localeCompare(String(a.creeLe))).slice(0,4).map(d=>`<button class="citem" data-dc="${esc(d.id)}"><span class="t">${esc(d.matiere)}</span><span class="m"><span class="pill">${esc(d.statut)}</span><span>${esc(dcType(d.type))}</span>${d.reponse?"<span>· réponse reçue</span>":""}</span></button>`).join("") || '<p class="small muted">Aucune demande pour l\'instant.</p>'}</div>`;
+}
+function bindDeleguesCommun(){
+  const M = $("#main");
+  M.querySelectorAll("[data-dgo]").forEach(a => a.addEventListener("click", () => { S.sub.delegues = a.dataset.dgo; }));
+  M.querySelectorAll("[data-dc]").forEach(b => b.onclick = () => ficheDemandeCours(b.dataset.dc));
+}
+/* Alertes : rapports de délégués à contrôler, demandes en attente, obligations du délégué */
+function alertesDelegues(){
+  const A = [], r = role();
+  const aViser = S.rapportsDelegues.filter(x=>x.statut==="Soumis" && mesVisas(x).some(k=>!x.visas?.[k]));
+  if (aViser.length) A.push({niv:"warn", titre:`${aViser.length} rapport(s) de délégué à contrôler`, detail:aViser.slice(0,3).map(x=>`${groupeLib(x.groupe)} (${x.delegueNom})`).join(" · "), pour:[r], lien:r==="tuteur"?"#t-delegues":"#delegues"});
+  if (aRole("formation","tuteurs") && !presidence()){ const att = S.demandesCours.filter(d=>d.statut==="Soumise"); if (att.length) A.push({niv:"warn", titre:`${att.length} demande(s) de cours de délégués en attente`, detail:att.slice(0,3).map(d=>`${groupeLib(d.groupe)} : ${d.matiere}`).join(" · "), pour:[r], lien:"#delegues"}); }
+  if (estDelegue() && !presidence()){ const E = etatDelegue(), j = (parseD(today()).getDay()+6)%7;
+    if (!E.cours.length) A.push({niv:j===0?"warn":"info", titre:"Cours à faire expliquer : dépôt du lundi", detail:"Aucun cours déposé cette semaine.", pour:[r], lien:"#delegues"});
+    if (j>=4 && (!E.rap || E.rap.statut==="Brouillon")) A.push({niv:"warn", titre:"Rapport hebdomadaire de la spécialité à soumettre", detail:semLib(E.sem), pour:[r], lien:"#delegues"});
+    if (j>=4 && E.resteNotes.length) A.push({niv:"info", titre:`${E.resteNotes.length} tuteur(s) à noter cette semaine`, detail:E.resteNotes.map(t=>t.nom).join(", "), pour:[r], lien:"#delegues"});
+  }
+  return A;
+}
+function abonnerDelegues(){
+  const db = S.db, fusion = (cle, part) => s => { S["_"+cle] ||= {}; S["_"+cle][part] = rows(s); S[cle] = [...new Map(Object.values(S["_"+cle]).flat().map(x=>[x.id,x])).values()]; };
+  const cols = [["demandes_cours","demandesCours"],["rapports_delegues","rapportsDelegues"]];
+  if (supDelegues()) cols.forEach(([p,k]) => sub(p, k, s => { S[k] = rows(s); }));
+  else {
+    if (estDelegue()) cols.forEach(([p,k]) => sub(p, k, fusion(k,"moi"), db.collection(p).where("delegueEmail","==",S.email)));
+    if (estTuteurR()) cols.forEach(([p,k]) => sub(p, k, fusion(k,"groupe"), db.collection(p).where("groupe","==",groupeDe(compte()))));
+  }
+  if (voitNotesTut()) sub("notes_tuteurs","notesTuteurs", s => { S.notesTuteurs = rows(s); });
+  else if (estDelegue()) sub("notes_tuteurs","notesTuteurs", s => { S.notesTuteurs = rows(s); }, db.collection("notes_tuteurs").where("delegueEmail","==",S.email));
+}
+
 function sub(path, key, fn, q){
   const timer = setTimeout(()=>{ S.stale=true; queueRender(); }, 10000);
   (q || S.db.collection(path)).onSnapshot(snap => { if (!snap.metadata.fromCache) clearTimeout(timer); fn(snap); S.loaded[key]=true; queueRender(); },
@@ -3402,7 +3679,7 @@ function abonner(){
   else if (r==="tuteur") db.doc("rapports_tuteurs/"+S.uid).onSnapshot(d => { S.tut = d.exists ? [{id:d.id, ...d.data()}] : []; queueRender(); }, ()=>{});
   const canaux = r==="president" ? ["president"] : [r, "u_"+S.uid, "e_"+S.email];
   canaux.forEach((c, i) => db.collection(`notifs/${c}/items`).orderBy("le","desc").limit(lectureTotale()?400:150).onSnapshot(s => { S.jx[i] = rows(s); fusionJournal(); queueRender(); }, ()=>{}));
-  abonnerGouv();
+  abonnerGouv(); abonnerDelegues();
   if (lectureTotale()){ sub("consignes","consignes", s => { S.consignes = rows(s); }); sub("evaluations","evaluations", s => { S.evaluations = rows(s); }); }
   else { sub("consignes","consignes", s => { S.consignes = rows(s); }, db.collection("consignes").where("dest","==",S.email)); sub("evaluations","evaluations", s => { S.evaluations = rows(s); }, db.collection("evaluations").where("email","==",S.email)); }
   sub("classement","classements", s => { S.classements = rows(s); });
