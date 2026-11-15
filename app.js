@@ -233,9 +233,9 @@ function confirmBtn(btn, label, fn){ btn.onclick = () => { if (btn.dataset.sure!
 
 /* ======== État ======== */
 const S = {
-  db:null, fb:null, uid:null, email:null, moi:null, sansConfig:false, authPret:false, stale:false, jx:[], demandesCours:[], rapportsDelegues:[], notesTuteurs:[], decisions:[], taches:[], reunions:[], audit:[],
+  db:null, fb:null, uid:null, email:null, moi:null, sansConfig:false, authPret:false, stale:false, jx:[], rapportsEquipe:[], demandesCours:[], rapportsDelegues:[], notesTuteurs:[], decisions:[], taches:[], reunions:[], audit:[],
   etudiants:[], prive:{}, encaissements:[], depots:[], operations:[], seances:[], notes:[], params:null, comptes:{}, demandes:{}, journal:[], journalPub:[], journalFin:[], tut:[], T:null, etat:{}, tf:{tuteur:"", statut:"", spec:""},
-  loaded:{}, C:null, sub:{delegues:"demandes", caisse:"synthese", pedagogie:"seances", admin:"comptes", etudiants:""},
+  loaded:{}, C:null, sub:{equipe:"", delegues:"demandes", caisse:"synthese", pedagogie:"seances", admin:"comptes", etudiants:""},
   f:{q:"", niveau:"", situation:"", spec:""}, rf:{q:"", nature:"", mois:"", statut:"valides"},
   firstJournal:true,
   consignes:[], evaluations:[], messages:[], formations:[], affectations:[], rapportsHebdo:[], dossiers:[], rapportsResp:[], syntheses:[], sf:{sem:"", st:""}, df:{st:"ouverts"}, cf2:{st:"", q:""}, editRH:null, mf:{onglet:"attente", type:""}, classements:[], cf:{statut:"", dest:""}, evalP:"", classP:"", rp:{type:"", mois:"", a:"", b:"", tut:""}
@@ -298,6 +298,7 @@ const VIEWS = [
   {id:"accueil", l:"Tableau de bord", ok:()=>true},
   {id:"consignes", l:"Consignes", ok:()=>true},
   {id:"delegues", l:"Délégués de spécialité", ok:()=>estDelegue() || supDelegues()},
+  {id:"equipe", l:"Espace responsables", ok:()=>jeSuisEquipe() || gouvSup()},
   {id:"taches", l:"Tâches", ok:()=>true},
   {id:"decisions", l:"Décisions", ok:()=>gouvSup() || S.decisions.length>0},
   {id:"reunions", l:"Réunions", ok:()=>true},
@@ -353,6 +354,7 @@ function recalc(){
   if (can("tut.voir")) S.C.alertes.push(...S.T.alertes.filter(a=>!/sans rapport depuis/.test(a.titre)));
   try { S.C.alertes.push(...alertesSuivi()); } catch(e){ console.error(e); }
   try { S.C.alertes.push(...alertesDelegues()); } catch(e){ console.error(e); }
+  try { S.C.alertes.push(...alertesEquipe()); } catch(e){ console.error(e); }
   const mesRet = mesConsignes().filter(k=>!["Faite","Annulée"].includes(k.statut) && k.echeance<today());
   if (mesRet.length) S.C.alertes.push({niv:"bad", titre:`${mesRet.length} consigne(s) de la Présidence en retard`, detail:mesRet.slice(0,3).map(k=>k.titre).join(" · "), pour:[role()], lien:"#consignes"});
   if (consignesNonLues()) S.C.alertes.push({niv:"warn", titre:`${consignesNonLues()} nouvelle(s) consigne(s) de la Présidence`, detail:mesConsignes().filter(k=>k.statut==="Envoyée").slice(0,3).map(k=>k.titre).join(" · "), pour:[role()], lien:role()==="tuteur"?"#t-consignes":"#consignes"});
@@ -385,12 +387,12 @@ function rendu(){
   navigation(VIEWS.filter(x=>x.ok()).map(x=>({id:x.id, l:x.id==="consignes"&&!lectureTotale()?"Mes consignes":lab(x), n:nb(x)})), v, principauxDe(role()));
   majBadge();
   if (v==="depots") S.sub.caisse = "depots";
-  main.innerHTML = (v==="accueil" ? heroAccueil() + anneaux() + (lectureTotale() ? blocActivite() : "") + blocGouv() + blocConsignes() : "") + ({delegues:vDelegues, taches:vTaches, decisions:vDecisions, reunions:vReunions, organigramme:vOrganigramme, audit:vAudit, suivi:vSuivi, synthese:vSynthese, catalogue:vCatalogue, messages:vMessages, consignes:vConsignes, rapports:vRapports, evaluations:vEvaluations, classement:vClassement, accueil:vAccueil, etudiants:vEtudiants, registre:vRegistre, cotisations:vCotisations, caisse:vCaisse, depots:vCaisse, pedagogie:vPedagogie, tutorat:vTutorat, notifications:vNotifs, admin:vAdmin, compte:vCompte}[v])();
+  main.innerHTML = (v==="accueil" ? heroAccueil() + anneaux() + (lectureTotale() ? blocActivite() : "") + blocGouv() + blocConsignes() : "") + (v==="accueil" ? blocEquipe() : "") + ({equipe:vEquipe, delegues:vDelegues, taches:vTaches, decisions:vDecisions, reunions:vReunions, organigramme:vOrganigramme, audit:vAudit, suivi:vSuivi, synthese:vSynthese, catalogue:vCatalogue, messages:vMessages, consignes:vConsignes, rapports:vRapports, evaluations:vEvaluations, classement:vClassement, accueil:vAccueil, etudiants:vEtudiants, registre:vRegistre, cotisations:vCotisations, caisse:vCaisse, depots:vCaisse, pedagogie:vPedagogie, tutorat:vTutorat, notifications:vNotifs, admin:vAdmin, compte:vCompte}[v])();
   bind(v==="depots" ? "caisse" : v);
   if (v==="compte") bindCompte();
   if (v==="notifications") marquerLu();
-  if (v==="accueil"){ bindGouvCommun(); bindDeleguesCommun(); bindActivite(); }
-  ({delegues:bindDelegues, taches:bindTaches, decisions:bindDecisions, reunions:bindReunions, organigramme:bindOrganigramme, audit:bindAudit, suivi:bindSuivi, synthese:bindSynthese, catalogue:bindCatalogue, messages:bindMessages, consignes:bindConsignes, rapports:bindRapports, evaluations:bindEvaluations, classement:bindClassement}[v]||(()=>{}))();
+  if (v==="accueil"){ bindGouvCommun(); bindDeleguesCommun(); bindActivite(); $("#main").querySelectorAll("[data-ego]").forEach(a => a.addEventListener("click", () => { S.sub.equipe = a.dataset.ego; })); }
+  ({equipe:bindEquipe, delegues:bindDelegues, taches:bindTaches, decisions:bindDecisions, reunions:bindReunions, organigramme:bindOrganigramme, audit:bindAudit, suivi:bindSuivi, synthese:bindSynthese, catalogue:bindCatalogue, messages:bindMessages, consignes:bindConsignes, rapports:bindRapports, evaluations:bindEvaluations, classement:bindClassement}[v]||(()=>{}))();
   $("#main").querySelectorAll("[data-cons]").forEach(b => b.onclick = () => ficheConsigne(b.dataset.cons));
   if (!["suivi","synthese"].includes(v)){ $("#main").querySelectorAll("[data-rh]").forEach(b => b.onclick = e => { e.preventDefault(); ficheHebdo(b.dataset.rh); }); $("#main").querySelectorAll("[data-dos]").forEach(b => b.onclick = () => ficheDossier(b.dataset.dos)); $("#main").querySelectorAll("[data-syn]").forEach(b => b.onclick = () => ficheSynthese(b.dataset.syn)); }
   $("#main").querySelectorAll("[data-goto-sub]").forEach(a => a.addEventListener("click", () => { S.sub.synthese = a.dataset.gotoSub; }));
@@ -1569,6 +1571,7 @@ const ICO = (() => {
     catalogue: s('<path d="M4 5a2 2 0 0 1 2-2h12v16H6a2 2 0 0 0-2 2z"/><path d="M4 19V5"/><path d="M9 7h6"/>'),
     hebdo: s('<rect x="3" y="5" width="18" height="16" rx="2"/><path d="M3 10h18M8 3v4M16 3v4"/><path d="M8 15h5"/>'),
     messages: s('<path d="M20.5 11.6a8.4 8.4 0 0 1-12.4 7.4L3.5 20.5l1.6-4.4a8.4 8.4 0 1 1 15.4-4.5z"/><path d="M9 9.5c.3 2 2.2 4.2 5.2 5l1-1.2-1.6-1-.8.6c-.9-.4-1.8-1.3-2.2-2.2l.6-.8-1-1.6z"/>'),
+    equipe: s('<path d="M4 20V11M10 20V4M16 20v-7M22 20H2"/>'),
     delegues: s('<circle cx="12" cy="7" r="3.5"/><path d="M5 21c.8-4 3.5-6 7-6s6.2 2 7 6"/><path d="m17.5 3 .9 1.8 2 .3-1.4 1.4.3 2-1.8-.9-1.8.9.3-2-1.4-1.4 2-.3z"/>'),
     taches: s('<rect x="4" y="3" width="16" height="18" rx="2"/><path d="m8 9 2 2 4-4M8 16h8"/>'),
     decisions: s('<path d="M5 21V4M5 4h11l-2 4 2 4H5"/>'),
@@ -1586,7 +1589,7 @@ function navigation(items, courant, principaux){
   $("#tabs").innerHTML = items.map(x=>`<a href="#${x.id}" ${x.id===courant?'aria-current="page"':""}>${esc(x.l)}${x.n?` (${x.n})`:""}</a>`).join("");
   const bn = $("#bnav"); bn.hidden = false;
   const pr = principaux.map(id=>items.find(x=>x.id===id)).filter(Boolean).slice(0,4);
-  const court = l => ({"Tableau de bord":"Accueil","Tableau général":"Accueil","Mon espace":"Accueil","Mon tableau de bord":"Accueil","Alertes et notifications":"Alertes","Notifications":"Alertes","Registre des encaissements":"Registre","Suivi des cotisations":"Cotisations","Suivi pédagogique":"Pédagogie","Rapports des tuteurs":"Tutorat","Mes consignes":"Consignes","Nouveau rapport":"Rapport","Mes rapports":"Rapports","Mes dépôts à la caisse":"Dépôts","WhatsApp étudiants":"WhatsApp","Suivi des étudiants":"Suivi","Synthèses et rapports":"Synthèses","Catalogue des formations":"Catalogue","Rapport de la semaine":"Rapport","Mes étudiants":"Étudiants","Journal d'audit":"Audit","Délégués de spécialité":"Délégués"}[l] || l);
+  const court = l => ({"Tableau de bord":"Accueil","Tableau général":"Accueil","Mon espace":"Accueil","Mon tableau de bord":"Accueil","Alertes et notifications":"Alertes","Notifications":"Alertes","Registre des encaissements":"Registre","Suivi des cotisations":"Cotisations","Suivi pédagogique":"Pédagogie","Rapports des tuteurs":"Tutorat","Mes consignes":"Consignes","Nouveau rapport":"Rapport","Mes rapports":"Rapports","Mes dépôts à la caisse":"Dépôts","WhatsApp étudiants":"WhatsApp","Suivi des étudiants":"Suivi","Synthèses et rapports":"Synthèses","Catalogue des formations":"Catalogue","Rapport de la semaine":"Rapport","Mes étudiants":"Étudiants","Journal d'audit":"Audit","Délégués de spécialité":"Délégués","Espace responsables":"Équipe"}[l] || l);
   const lien = x => `<a href="#${x.id}" ${x.id===courant?'aria-current="page"':""}>${icoDe(x.id)}<span>${esc(court(x.l))}</span>${x.n?`<b class="nb">${x.n>99?"99+":x.n}</b>`:""}</a>`;
   const p3 = pr.slice(0,3);
   bn.innerHTML = p3.slice(0,2).map(lien).join("") + `<button type="button" class="fab" id="bFab" aria-label="Actions rapides">${ICO.nouveau}</button>` + (p3[2] ? lien(p3[2]) : "<span></span>")
@@ -1608,7 +1611,7 @@ function principauxDe(r){
     pedagogie:["accueil","pedagogie","catalogue","messages"], secretaire:["accueil","suivi","synthese","consignes"],
     tuteur:["t-accueil","t-hebdo","t-rapports","t-consignes"],
     delegue:["accueil","delegues","taches","consignes"],
-    responsable:["accueil","taches","reunions","consignes"], membre:["accueil","taches","reunions","consignes"]
+    responsable:["accueil","taches","equipe","reunions"], membre:["accueil","taches","equipe","reunions"]
   })[r] || ["accueil","taches","consignes","notifications"];
 }
 
@@ -2898,6 +2901,7 @@ function actionsRapides(){
     estDelegue() && !presidence() && ["Déposer un cours à expliquer", ICO.catalogue, () => formDemandeCours("cours")],
     estDelegue() && !presidence() && ["Rapport de la semaine", ICO.hebdo, () => formRapportDelegue()],
     presidence() && ["Nouvelle décision", ICO.decisions, () => formDecision()],
+    jeSuisEquipe() && ["Mon rapport de la semaine", ICO.equipe, () => { S.sub.equipe = "rapport"; location.hash = "equipe"; }],
     peutCreerTache() && ["Attribuer une tâche", ICO.taches, () => formTache()],
     peutConvoquer() && ["Programmer une réunion", ICO.reunions, () => formReunion()],
     r==="tuteur" && ["Rapport de la semaine", ICO.hebdo, go("t-hebdo")],
@@ -3696,6 +3700,119 @@ function bindActivite(){
   });
 }
 
+/* =====================================================================
+   ESPACE RESPONSABLES (intégré) : rapport hebdomadaire de chaque
+   responsable et score d'implication mensuel
+   (tâches à temps 50 %, présence aux réunions 30 %, rapports 20 %)
+   ===================================================================== */
+const ROLES_EQUIPE = ["secretaire","vicepresident","encaissement","caisse","formation","tuteurs","accompagnement","responsable","membre"];
+const dansEquipe = c => !!c && c.role!=="president" && rolesDe(c).some(r=>ROLES_EQUIPE.includes(r));
+const equipeActive = () => actifsTous().filter(dansEquipe);
+const jeSuisEquipe = () => !presidence() && dansEquipe(compte());
+const reId = (em, s) => `${em}_${s}`;
+const POIDS_IMP = {taches:.5, presence:.3, rapports:.2};
+/* Première semaine où le rapport hebdomadaire des responsables est exigé (les semaines antérieures ne comptent pas) */
+const debutRE = () => P().equipeDebut || "2026-11-16";
+function scoreImplication(em, ym){
+  const [y,m] = ym.split("-").map(Number), debut = isoD(new Date(y,m-1,1)), fin = isoD(new Date(y,m,0)), t = today(), finEff = fin < t ? fin : t;
+  let tn=0, tv=0, pn=0, pv=0, rn=0, rv=0;
+  if (debut <= t){
+    for (const x of S.taches){
+      if (x.dest!==em || !x.echeance || x.statut==="Annulée") continue;
+      const fait = x.statut==="Terminée" ? String(((x.historique||[]).filter(h=>h.statut==="Terminée").pop()||{}).le || x.majLe || "").slice(0,10) : null;
+      if (x.echeance >= debut && x.echeance <= finEff){ tn++; if (fait) tv += fait <= x.echeance ? 1 : .5; }
+      else if (x.echeance > finEff && fait && fait >= debut && fait <= finEff){ tn++; tv++; }
+    }
+    for (const r of S.reunions){
+      const d = String(r.debut||"").slice(0,10);
+      if (!d || d < debut || d > finEff || r.statut==="Annulée" || !(r.convoques||[]).includes(em)) continue;
+      const p = r.presences?.[ek(em)]; if (!p || p==="Convoqué") continue;
+      pn++; pv += p==="Présent" ? 1 : p==="Excusé" ? .5 : 0;
+    }
+    let lun = lundiDe(debut); if (lun < debut) lun = addJ(lun, 7);
+    while (lun <= fin){ if (addJ(lun,6) < t && lun >= debutRE()){ rn++; if (S.rapportsEquipe.some(r=>r.email===em && r.semaine===lun)) rv++; } lun = addJ(lun, 7); }
+  }
+  const c = {taches: tn ? tv/tn : null, presence: pn ? pv/pn : null, rapports: rn ? rv/rn : null};
+  let sw=0, s=0; for (const k in POIDS_IMP) if (c[k]!=null){ s += c[k]*POIDS_IMP[k]; sw += POIDS_IMP[k]; }
+  return {...c, global: sw ? s/sw : null, n:{tn, tv, pn, pv, rn, rv}};
+}
+const niveauImp = v => v==null ? {l:"Pas de données", c:"mute"} : v>=.8 ? {l:"Très impliqué", c:"ok"} : v>=.6 ? {l:"Impliqué", c:"ok"} : v>=.4 ? {l:"À relancer", c:"warn"} : {l:"Alerte", c:"bad"};
+
+function vEquipe(){
+  const moi = jeSuisEquipe(), sup = gouvSup(), chef = mesComsResp().length>0;
+  const onglets = [...(moi?[["rapport","Mon rapport"]]:[]), ...((sup||chef)?[["rapports","Rapports de l'équipe"]]:[]), ["implication", sup?"Implication":"Mon implication"]];
+  const sub = onglets.some(o=>o[0]===S.sub.equipe) ? S.sub.equipe : onglets[0][0];
+  const sem = semCourante(), prec = addJ(sem,-7);
+  let body = "";
+  if (sub==="rapport"){
+    const r = S.rapportsEquipe.find(x=>x.email===S.email && x.semaine===sem);
+    const anciens = S.rapportsEquipe.filter(x=>x.email===S.email && x.semaine!==sem).sort((a,b)=>String(b.semaine).localeCompare(String(a.semaine))).slice(0,6);
+    body = `<form id="ref" class="form card"><div class="spread"><h3>Mon rapport · ${esc(semLib(sem))}</h3>${r?'<span class="pill ok">Déposé</span>':'<span class="pill bad">À déposer avant dimanche</span>'}</div>
+      <label class="f" for="re1">Ce que j'ai fait cette semaine<textarea id="re1" maxlength="1500" placeholder="Actions menées, résultats obtenus.">${esc(r?.fait||"")}</textarea></label>
+      <label class="f" for="re2">Difficultés ou besoins<textarea id="re2" maxlength="1000">${esc(r?.difficultes||"")}</textarea></label>
+      <label class="f" for="re3">Ce que je prévois la semaine prochaine<textarea id="re3" maxlength="1000">${esc(r?.prevu||"")}</textarea></label>
+      <div class="row"><button class="btn primary" type="submit">${r?"Mettre à jour":"Déposer mon rapport"}</button></div></form>
+      ${anciens.length?`<div class="card"><h3>Mes rapports précédents</h3>${anciens.map(x=>`<details><summary class="small"><b>${esc(semLib(x.semaine))}</b></summary><p class="small"><b>Fait :</b> ${esc(x.fait)}</p>${x.difficultes?`<p class="small"><b>Difficultés :</b> ${esc(x.difficultes)}</p>`:""}${x.prevu?`<p class="small"><b>Prévu :</b> ${esc(x.prevu)}</p>`:""}</details>`).join("")}</div>`:""}`;
+  }
+  if (sub==="rapports"){
+    const E = sup ? equipeActive() : equipeActive().filter(c=>(c.commissions||[]).some(k=>mesComsResp().includes(k)));
+    const etat = w => E.map(c=>{ const ok = S.rapportsEquipe.some(r=>r.email===c.em && r.semaine===w); return `<span class="pill ${ok?"ok":"bad"}">${ok?"✓":"✗"} ${esc(c.nom)}</span>`; }).join(" ");
+    const L = S.rapportsEquipe.filter(r=>E.some(c=>c.em===r.email)).sort((a,b)=>(String(b.semaine)+String(b.majLe)).localeCompare(String(a.semaine)+String(a.majLe))).slice(0,40);
+    const manq = E.filter(c=>!S.rapportsEquipe.some(r=>r.email===c.em && r.semaine===prec));
+    body = `${prec < debutRE() ? `<div class="banner">Le rapport hebdomadaire des responsables est exigé à partir de la ${esc(semLib(debutRE()))}. Les semaines précédentes ne comptent pas dans l'implication.</div>` : ""}<div class="kpis">${kpi(`${E.length-manq.length} / ${E.length}`,`rapports déposés · ${semLib(prec).replace("semaine du","sem. du")}`,"g")}${kpi(manq.length,"rapports manquants",manq.length?"bad":"g")}</div>
+      <div class="card"><h3>Dépôts</h3><p class="small muted">Semaine en cours (${esc(semLib(sem))})</p><div class="row">${etat(sem) || '<span class="small muted">Aucun responsable.</span>'}</div><p class="small muted">Semaine précédente</p><div class="row">${etat(prec)}</div></div>
+      <div class="card"><h3>Derniers rapports</h3>${L.map(r=>`<details><summary><b>${esc(r.nom)}</b> <span class="small muted">· ${esc(semLib(r.semaine))}</span></summary><p class="small"><b>Fait :</b> ${esc(r.fait)}</p>${r.difficultes?`<p class="small"><b>Difficultés :</b> ${esc(r.difficultes)}</p>`:""}${r.prevu?`<p class="small"><b>Prévu :</b> ${esc(r.prevu)}</p>`:""}</details>`).join("") || '<div class="empty">Aucun rapport déposé pour l\'instant.</div>'}</div>`;
+  }
+  if (sub==="implication"){
+    const ym = S.impM ||= moisCourant();
+    const E = sup ? equipeActive() : (moi ? [{em:S.email, ...compte()}] : []);
+    const L = E.map(c=>({c, s:scoreImplication(c.em, ym)})).sort((a,b)=>(b.s.global??-1)-(a.s.global??-1));
+    const avec = L.filter(x=>x.s.global!=null), moy = avec.length ? avec.reduce((a,x)=>a+x.s.global,0)/avec.length : null;
+    const cell = (v,a,b) => `<td class="r">${v==null?'<span class="muted">—</span>':`${pct(v)}<br><span class="small muted">${String(a).replace(".",",")}/${b}</span>`}</td>`;
+    body = `<div class="filters"><select id="impM" aria-label="Mois">${opts(derniersMois(8).map(m=>[m, moisLibelle(m)]), ym)}</select><span></span></div>
+      ${sup?`<div class="kpis">${kpi(pct(moy),"implication moyenne")}${kpi(avec.filter(x=>x.s.global>=.6).length,"impliqués (60 % et plus)","g")}${kpi(avec.filter(x=>x.s.global<.4).length,"en alerte (moins de 40 %)",avec.some(x=>x.s.global<.4)?"bad":"g")}${kpi(L.length-avec.length,"sans données ce mois")}</div>`:""}
+      <div class="tablewrap"><table><thead><tr>${sup?"<th>#</th>":""}<th>Responsable</th><th class="r">Tâches à temps</th><th class="r">Présence</th><th class="r">Rapports</th><th class="r">Score</th><th>Niveau</th></tr></thead><tbody>
+      ${L.map((x,i)=>{ const n = niveauImp(x.s.global); return `<tr>${sup?`<td class="small muted">${x.s.global==null?"":i+1}</td>`:""}<td><b>${esc(x.c.nom)}</b><br><span class="small muted">${esc((x.c.fonctions||[]).map(titreFonction).join(", ") || ROLES[x.c.role]?.l || "")}</span></td>${cell(x.s.taches,x.s.n.tv,x.s.n.tn)}${cell(x.s.presence,x.s.n.pv,x.s.n.pn)}${cell(x.s.rapports,x.s.n.rv,x.s.n.rn)}<td class="r"><b>${pct(x.s.global)}</b></td><td><span class="pill ${n.c}">${n.l}</span></td></tr>`; }).join("") || `<tr><td colspan="7"><div class="empty">Aucun responsable.</div></td></tr>`}
+      </tbody></table></div>
+      <details class="card"><summary>Comment le score est calculé</summary><div class="small">
+      <p><b>Tâches à temps (50 %)</b> : tâches personnelles dont l'échéance tombe dans le mois. Terminée à temps = 1 point, terminée en retard = 0,5, non terminée = 0. Les tâches confiées à une équipe entière ne comptent pas.</p>
+      <p><b>Présence (30 %)</b> : réunions du mois où la personne était convoquée et pointée. Présent = 1, excusé = 0,5, absent = 0.</p>
+      <p><b>Rapports (20 %)</b> : semaines écoulées du mois où le rapport hebdomadaire a été déposé.</p>
+      <p>Un critère sans données est retiré du calcul. Niveaux : 80 % et plus très impliqué, 60 à 79 % impliqué, 40 à 59 % à relancer, moins de 40 % alerte.</p></div></details>`;
+  }
+  return `<h2>Espace responsables</h2><p class="small muted">Rapport hebdomadaire de chaque responsable et suivi de l'implication (tâches, réunions, rapports).</p>
+    <div class="subtabs" role="group" aria-label="Espace responsables">${onglets.map(([k,l])=>`<button data-esub="${k}" aria-pressed="${sub===k}">${l}</button>`).join("")}</div>${body}`;
+}
+function bindEquipe(){
+  $("#main").querySelectorAll("[data-esub]").forEach(b => b.onclick = () => { S.sub.equipe = b.dataset.esub; render(); });
+  $("#impM") && ($("#impM").onchange = e => { S.impM = e.target.value; render(); });
+  $("#ref") && ($("#ref").onsubmit = async e => {
+    e.preventDefault();
+    const c = compte(), sem = semCourante(), ex = S.rapportsEquipe.find(x=>x.email===S.email && x.semaine===sem), fait = $("#re1").value.trim();
+    if (fait.length < 15) return toast("Décrivez ce que vous avez fait cette semaine.");
+    const data = {email:S.email, nom:c.nom, semaine:sem, commissions:c.commissions||[], fait, difficultes:$("#re2").value.trim(), prevu:$("#re3").value.trim(), creeLe:ex?.creeLe||nowISO(), majLe:nowISO()};
+    if (await write(()=>S.db.doc("rapports_equipe/"+reId(S.email, sem)).set(data), "Rapport enregistré")){ if (!ex) log("rapport_equipe", `Rapport hebdomadaire de ${c.nom} déposé (${semLib(sem)})`, ["secretaire"]); render(); }
+  });
+}
+function blocEquipe(){
+  if (!jeSuisEquipe()) return "";
+  const sem = semCourante(), ok = S.rapportsEquipe.some(r=>r.email===S.email && r.semaine===sem), s = scoreImplication(S.email, moisCourant()), n = niveauImp(s.global);
+  return `<div class="card"><div class="spread"><h3>Mon implication · ${esc(moisLibelle(moisCourant()))}</h3><span class="pill ${n.c}">${s.global==null?"—":pct(s.global)} · ${n.l}</span></div>
+    <div class="prow"><span><b>${ok?"✅":"⬜"} Rapport de la semaine</b><br><span class="small muted">${ok?"Déposé":"À déposer avant dimanche soir"}</span></span><a class="btn sm ${ok?"ghost":"primary"}" href="#equipe" data-ego="rapport">${ok?"Voir":"Rédiger"}</a></div></div>`;
+}
+function alertesEquipe(){
+  const A = [], r = role(), j = (parseD(today()).getDay()+6)%7, sem = semCourante();
+  if (jeSuisEquipe() && j>=4 && !S.rapportsEquipe.some(x=>x.email===S.email && x.semaine===sem)) A.push({niv:"warn", titre:"Rapport hebdomadaire à déposer", detail:semLib(sem), pour:[r], lien:"#equipe"});
+  if (gouvSup()){ const prec = addJ(sem,-7), manq = equipeActive().filter(c=>!S.rapportsEquipe.some(x=>x.email===c.em && x.semaine===prec)); if (manq.length && prec >= debutRE()) A.push({niv:"warn", titre:`${manq.length} responsable(s) sans rapport la semaine dernière`, detail:manq.slice(0,5).map(c=>c.nom).join(", "), pour:[r], lien:"#equipe"}); }
+  return A;
+}
+function abonnerEquipe(){
+  const db = S.db, fusion = part => s => { S._re ||= {}; S._re[part] = rows(s); S.rapportsEquipe = [...new Map(Object.values(S._re).flat().map(x=>[x.id,x])).values()]; };
+  if (gouvSup()) return sub("rapports_equipe","rapportsEquipe", s => { S.rapportsEquipe = rows(s); });
+  sub("rapports_equipe","rapportsEquipe", fusion("moi"), db.collection("rapports_equipe").where("email","==",S.email));
+  mesComsResp().forEach(c => sub("rapports_equipe","rapportsEquipe", fusion("c_"+c), db.collection("rapports_equipe").where("commissions","array-contains",c)));
+}
+
 function sub(path, key, fn, q){
   const timer = setTimeout(()=>{ S.stale=true; queueRender(); }, 10000);
   (q || S.db.collection(path)).onSnapshot(snap => { if (!snap.metadata.fromCache) clearTimeout(timer); fn(snap); S.loaded[key]=true; queueRender(); },
@@ -3727,7 +3844,7 @@ function abonner(){
   else if (r==="tuteur") db.doc("rapports_tuteurs/"+S.uid).onSnapshot(d => { S.tut = d.exists ? [{id:d.id, ...d.data()}] : []; queueRender(); }, ()=>{});
   const canaux = r==="president" ? ["president"] : [r, "u_"+S.uid, "e_"+S.email];
   canaux.forEach((c, i) => db.collection(`notifs/${c}/items`).orderBy("le","desc").limit(lectureTotale()?400:150).onSnapshot(s => { S.jx[i] = rows(s); fusionJournal(); queueRender(); }, ()=>{}));
-  abonnerGouv(); abonnerDelegues();
+  abonnerGouv(); abonnerDelegues(); abonnerEquipe();
   if (lectureTotale()){ sub("consignes","consignes", s => { S.consignes = rows(s); }); sub("evaluations","evaluations", s => { S.evaluations = rows(s); }); }
   else { sub("consignes","consignes", s => { S.consignes = rows(s); }, db.collection("consignes").where("dest","==",S.email)); sub("evaluations","evaluations", s => { S.evaluations = rows(s); }, db.collection("evaluations").where("email","==",S.email)); }
   sub("classement","classements", s => { S.classements = rows(s); });
