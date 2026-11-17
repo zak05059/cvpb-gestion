@@ -803,6 +803,7 @@ function vRegistre(){
   const q = normNom(f.q); if (q) L = L.filter(e=>normNom(e.num+" "+e.matricule+" "+e.nom+" "+e.payeur+" "+refDe(e)+" "+(e.refOp||"")).includes(q));
   const tot = L.filter(valide).reduce((a,e)=>a+e.montant,0);
   return `<div class="spread"><h2>Registre des encaissements</h2><div class="row">${can("export")?`<button class="btn" id="expReg">Exporter (CSV)</button>`:""}${can("enc.saisir")?`<button class="btn primary" id="newEnc">+ Encaissement</button>`:""}</div></div>
+  ${(n => presidence() && n ? `<div class="banner"><b>${n} écriture(s) en « ${esc(NATURES[2])} ».</b> Cette nature n'est plus utilisée : le T-shirt fait partie de l'inscription. <button class="btn sm vert" id="requalTS">Requalifier en « ${esc(N_INSC)} »</button></div>` : "")(S.encaissements.filter(e=>valide(e) && e.nature===NATURES[2]).length)}
   <div class="kpis">${Object.entries(C.parNature).map(([k,v],i)=>`<div class="kpi ${i%2?"g":""}"><span class="v">${F(v)}</span><span class="l">${esc(k)}</span></div>`).join("")}</div>
   <div class="filters">
     <input type="search" id="rq" placeholder="N°, matricule, nom ou référence" value="${esc(f.q)}" aria-label="Recherche">
@@ -812,7 +813,7 @@ function vRegistre(){
   </div>
   <p class="small muted">${L.length} écriture(s) · total des écritures valides affichées : <b>${FC(tot)}</b>. Aucune écriture ne se supprime : une erreur s'annule avec motif.</p>
   <div class="tablewrap"><table><thead><tr><th>N°</th><th>Date</th><th>Matricule</th><th>Nom / payeur</th><th>Nature</th><th>Mois</th><th class="r">Montant</th><th>Mode</th><th>Référence</th><th>Encaissé par</th><th></th></tr></thead><tbody>
-  ${L.map(e=>`<tr class="${valide(e)?"":"annule"}"><td class="num keep">${esc(e.num)}</td><td>${dFR(e.date)}</td><td class="num">${esc(e.matricule||"—")}</td><td>${esc(e.nom||e.payeur||"—")}</td><td class="small">${esc(e.nature)}</td><td class="small">${esc(moisLib(e.mois))}</td><td class="r">${F(e.montant)}</td><td>${esc(e.mode)}</td><td class="num small">${esc(refDe(e))}${e.refOp?`<br><span class="muted">${esc(e.refOp)}</span>`:""}</td><td>${esc(e.encaissePar)}</td><td class="keep">${valide(e)?(can("enc.annuler")?`<button class="btn sm ghost" data-ann="${esc(e.num)}">Annuler</button>`:""):`<span class="pill bad" title="${esc(e.motif||"")}">Annulée</span>`}</td></tr>`).join("") || `<tr><td colspan="11"><div class="empty">Aucune écriture.</div></td></tr>`}
+  ${L.map(e=>`<tr class="${valide(e)?"":"annule"}"><td class="num keep">${esc(e.num)}</td><td>${dFR(e.date)}</td><td class="num">${esc(e.matricule||"—")}</td><td>${esc(e.nom||e.payeur||"—")}</td><td class="small">${esc(e.nature)}${e.natureAvant?`<br><span class="muted" title="${esc((e.requalifiePar||"")+" · "+(e.motifRequalif||""))}">requalifiée (avant : ${esc(e.natureAvant)})</span>`:""}</td><td class="small">${esc(moisLib(e.mois))}</td><td class="r">${F(e.montant)}</td><td>${esc(e.mode)}</td><td class="num small">${esc(refDe(e))}${e.refOp?`<br><span class="muted">${esc(e.refOp)}</span>`:""}</td><td>${esc(e.encaissePar)}</td><td class="keep">${valide(e)?(can("enc.annuler")?`<button class="btn sm ghost" data-ann="${esc(e.num)}">Annuler</button>`:""):`<span class="pill bad" title="${esc(e.motif||"")}">Annulée</span>`}</td></tr>`).join("") || `<tr><td colspan="11"><div class="empty">Aucune écriture.</div></td></tr>`}
   </tbody></table></div>`;
 }
 const moisLib = c => S.C.mois.find(m=>m.code===c)?.libelle || c || "—";
@@ -917,6 +918,26 @@ function formEnc(matInit){
         if (msg) openSheet(`<h2>Encaissement ${esc(id)} enregistré</h2><p>Envoyer la confirmation de paiement à <b>${esc(s.nom)}</b> sur WhatsApp ?</p>${telDe(m)?"":'<div class="banner">Pas de numéro enregistré pour cet étudiant : le message reste dans « WhatsApp étudiants ».</div>'}
           <div class="row">${telDe(m)?'<button class="btn vert" id="rcOk">Envoyer maintenant</button>':""}<button class="btn" data-close>Plus tard</button></div>`), $("#rcOk") && ($("#rcOk").onclick = () => { envoyerMsg(msg); closeSheet(); }); }
     }
+  };
+}
+/* Requalification (Présidence) : « Vente de T-shirt (hors inscription) » → « Inscription (T-shirt inclus) ».
+   Le montant, la date et la référence ne changent pas ; l'ancienne nature, l'auteur, la date et le motif sont conservés sur l'écriture. */
+function requalifierTshirts(){
+  const L = S.encaissements.filter(e=>valide(e) && e.nature===NATURES[2]).sort((a,b)=>a.num.localeCompare(b.num));
+  if (!L.length) return toast("Aucune écriture à requalifier.");
+  openSheet(`<h2>Requalifier ${L.length} écriture(s)</h2><p class="small">Nature actuelle : « ${esc(NATURES[2])} » → nouvelle nature : <b>« ${esc(N_INSC)} »</b>. Le montant, la date et la référence restent identiques. Le paiement comptera dans l'inscription de l'étudiant ; si l'inscription est déjà soldée, le surplus ira aux cotisations.</p>
+    <div class="tablewrap"><table><thead><tr><th>N°</th><th>Date</th><th>Étudiant / payeur</th><th class="r">Montant</th></tr></thead><tbody>${L.map(e=>`<tr><td class="num">${esc(e.num)}</td><td>${dFR(e.date)}</td><td>${esc(e.nom||e.payeur||"—")}${e.matricule?"":' <span class="pill warn">hors liste</span>'}</td><td class="r">${F(e.montant)}</td></tr>`).join("")}</tbody></table></div>
+    <label class="f" for="rq_m">Motif (conservé sur chaque écriture)<textarea id="rq_m" maxlength="300">T-shirt payé dans le cadre de l'inscription : nature « hors inscription » supprimée.</textarea></label>
+    <div class="row"><button class="btn vert" id="rq_ok">Requalifier ${L.length} écriture(s)</button><button class="btn ghost" data-close>Annuler</button></div>`);
+  $("#rq_ok").onclick = async () => {
+    const motif = $("#rq_m").value.trim(); if (motif.length<3) return toast("Indiquez le motif.");
+    const le = nowISO(), par = compte().nom; let ok = 0;
+    $("#rq_ok").disabled = true;
+    for (const e of L){
+      try { await S.db.doc("encaissements/"+e.num).update({nature:N_INSC, natureAvant:NATURES[2], requalifiePar:par, requalifieLe:le, motifRequalif:motif}); ok++; } catch(x){ console.warn(x); }
+    }
+    log("encaissement", `Requalification de ${ok} écriture(s) « ${NATURES[2]} » en « ${N_INSC} » · ${motif}`, ["president","tresorerie","encaissement"]);
+    toast(ok===L.length ? `${ok} écriture(s) requalifiée(s)` : `${ok}/${L.length} requalifiée(s) : vérifiez la connexion et réessayez.`); closeSheet();
   };
 }
 function annulerEnc(num){
@@ -1567,6 +1588,7 @@ function bind(v){
   }
   if (v==="registre"){
     on("#newEnc","onclick",()=>formEnc());
+    on("#requalTS","onclick",requalifierTshirts);
     on("#rq","oninput",e=>{ S.rf.q=e.target.value; clearTimeout(bind.t); bind.t=setTimeout(()=>{ render(); const i=$("#rq"); i.focus(); i.setSelectionRange(i.value.length,i.value.length); },250); });
     on("#rnat","onchange",e=>{S.rf.nature=e.target.value;render();}); on("#rmois","onchange",e=>{S.rf.mois=e.target.value;render();}); on("#rst","onchange",e=>{S.rf.statut=e.target.value;render();});
     main.querySelectorAll("[data-ann]").forEach(b=>b.onclick=()=>annulerEnc(b.dataset.ann));
