@@ -66,6 +66,8 @@ const CODE_MODE = {"Espèces":"ES","Wave":"WV","Orange Money":"OM","MTN MoMo":"M
 const refAuto = (num, mode, date) => `${CODE_MODE[mode]||"AU"}-${String(date||"").slice(2,4)}${String(date||"").slice(5,7)}-${String(num||"").replace(/^ENC-/,"")}`;
 const refDe = e => e.ref || refAuto(e.num, e.mode, e.date);
 /* v22 : types d'évaluation proposés aux formateurs */
+/* v22 : tailles de T-shirt (choisies par l'étudiant dans CVPB Académie, commande dans « T-shirts ») */
+const TAILLES_TS = ["XS","S","M","L","XL","XXL","3XL"];
 const TYPES_EVAL = ["Devoir","Interrogation","Travaux pratiques","Séance pratique","Travail de groupe","Projet","Exposé","Participation","Examen","Autre"];
 const PARAM_DEFAUT = {
   annee:"2026-2027", prefixe:"CVPB-26-",
@@ -282,7 +284,7 @@ function confirmBtn(btn, label, fn){ btn.onclick = () => { if (btn.dataset.sure!
 /* ======== État ======== */
 const S = {
   db:null, fb:null, uid:null, email:null, moi:null, sansConfig:false, authPret:false, stale:false, jx:[], rapportsEquipe:[], demandesCours:[], rapportsDelegues:[], notesTuteurs:[], decisions:[], taches:[], reunions:[], audit:[],
-  etudiants:[], prive:{}, encaissements:[], depots:[], operations:[], seances:[], notes:[], programme:[], pointagesTut:[], pointagesCom:[], params:null, comptes:{}, demandes:{}, journal:[], journalPub:[], journalFin:[], tut:[], T:null, etat:{}, tf:{tuteur:"", statut:"", spec:""},
+  etudiants:[], prive:{}, encaissements:[], depots:[], operations:[], seances:[], notes:[], programme:[], pointagesTut:[], pointagesCom:[], tshirts:[], params:null, comptes:{}, demandes:{}, journal:[], journalPub:[], journalFin:[], tut:[], T:null, etat:{}, tf:{tuteur:"", statut:"", spec:""},
   loaded:{}, C:null, pf:{types:["academie","tutorat","communaute","reunion"], vue:"semaine", ref:"", miens:false}, sub:{equipe:"", delegues:"demandes", caisse:"synthese", pedagogie:"seances", admin:"comptes", etudiants:""},
   f:{q:"", niveau:"", situation:"", spec:""}, rf:{q:"", nature:"", mois:"", statut:"valides"},
   firstJournal:true,
@@ -359,6 +361,7 @@ const VIEWS = [
   {id:"etudiants", l:"Étudiants", ok:RL("encaissement","tresorerie","secretaire")},
   {id:"registre", l:"Registre des encaissements", ok:RL("encaissement","tresorerie")},
   {id:"cotisations", l:"Suivi des cotisations", ok:RL("encaissement","tresorerie")},
+  {id:"tshirts", l:"T-shirts (tailles et commande)", ok:RL("encaissement","tresorerie","caisse")},
   {id:"caisse", l:"Caisse", ok:RL("caisse","tresorerie")},
   {id:"depots", l:"Mes dépôts à la caisse", ok:()=>role()==="encaissement"},
   {id:"pedagogie", l:"Suivi pédagogique", ok:RL("formation","pedagogie","secretaire","accompagnement")},
@@ -436,7 +439,7 @@ function rendu(){
   navigation(VIEWS.filter(x=>x.ok()).map(x=>({id:x.id, l:x.id==="consignes"&&!lectureTotale()?"Mes consignes":lab(x), n:nb(x)})), v, principauxDe(role()));
   majBadge();
   if (v==="depots") S.sub.caisse = "depots";
-  main.innerHTML = (v==="accueil" ? heroAccueil() + anneaux() + (lectureTotale() ? blocActivite() : "") + blocGouv() + blocConsignes() : "") + (v==="accueil" ? blocProgramme() + blocEquipe() : "") + ({programme:vProgramme, equipe:vEquipe, delegues:vDelegues, taches:vTaches, decisions:vDecisions, reunions:vReunions, organigramme:vOrganigramme, audit:vAudit, suivi:vSuivi, synthese:vSynthese, catalogue:vCatalogue, messages:vMessages, consignes:vConsignes, rapports:vRapports, evaluations:vEvaluations, classement:vClassement, accueil:vAccueil, etudiants:vEtudiants, registre:vRegistre, cotisations:vCotisations, caisse:vCaisse, depots:vCaisse, pedagogie:vPedagogie, tutorat:vTutorat, notifications:vNotifs, admin:vAdmin, compte:vCompte}[v])();
+  main.innerHTML = (v==="accueil" ? heroAccueil() + anneaux() + (lectureTotale() ? blocActivite() : "") + blocGouv() + blocConsignes() : "") + (v==="accueil" ? blocProgramme() + blocEquipe() : "") + ({programme:vProgramme, equipe:vEquipe, delegues:vDelegues, taches:vTaches, decisions:vDecisions, reunions:vReunions, organigramme:vOrganigramme, audit:vAudit, suivi:vSuivi, synthese:vSynthese, catalogue:vCatalogue, messages:vMessages, consignes:vConsignes, rapports:vRapports, evaluations:vEvaluations, classement:vClassement, accueil:vAccueil, etudiants:vEtudiants, registre:vRegistre, cotisations:vCotisations, tshirts:vTshirts, caisse:vCaisse, depots:vCaisse, pedagogie:vPedagogie, tutorat:vTutorat, notifications:vNotifs, admin:vAdmin, compte:vCompte}[v])();
   bind(v==="depots" ? "caisse" : v);
   if (v==="compte") bindCompte();
   if (v==="notifications") marquerLu();
@@ -919,6 +922,39 @@ function formEnc(matInit){
           <div class="row">${telDe(m)?'<button class="btn vert" id="rcOk">Envoyer maintenant</button>':""}<button class="btn" data-close>Plus tard</button></div>`), $("#rcOk") && ($("#rcOk").onclick = () => { envoyerMsg(msg); closeSheet(); }); }
     }
   };
+}
+/* ---- T-shirts : tailles choisies par les étudiants dans CVPB Académie, préparation de la commande ---- */
+const tshirtPaye = mat => { const e = S.C.etu[mat]; return !!e && (e.inscPayee >= P().tshirt || (e.tshirtVendu||0) >= P().tshirt); };
+function vTshirts(){
+  const f = (S.tsf ||= {q:"", st:""});
+  const T = {}; for (const t of S.tshirts) T[t.matricule || t.id] = t;
+  const payes = S.etudiants.filter(s=>s.statut!=="Inactif" && tshirtPaye(s.matricule));
+  const mats = new Set([...payes.map(s=>s.matricule), ...Object.keys(T)]);
+  let L = [...mats].map(m => { const s = etuBy(m) || {matricule:m, nom:T[m]?.nom||m}; const t = T[m]; return {s, t, paye: tshirtPaye(m), st: t ? (t.statut||"Choisie") : "Non choisie"}; }).sort((a,b)=>a.s.nom.localeCompare(b.s.nom,"fr"));
+  const K = st => L.filter(x=>x.st===st).length;
+  const aCommander = L.filter(x=>x.st==="Choisie" && x.paye);
+  const parTaille = TAILLES_TS.map(t => [t, aCommander.filter(x=>x.t.taille===t).length, L.filter(x=>x.t?.taille===t && x.st!=="Non choisie").length]);
+  if (f.st) L = L.filter(x=>x.st===f.st);
+  const q = normNom(f.q); if (q) L = L.filter(x=>normNom(x.s.matricule+" "+x.s.nom).includes(q));
+  const gere = can("enc.saisir") || role()==="tresorerie" || presidence();
+  return `<div class="spread"><div><h2>T-shirts · tailles et commande</h2><p class="small muted">Chaque étudiant qui a payé son T-shirt choisit sa taille dans son espace CVPB Académie. Ici, vous préparez la commande et suivez la remise.</p></div><div class="row"><button class="btn" id="tsExp">Exporter (CSV)</button>${gere && aCommander.length?`<button class="btn primary" id="tsCmd">Marquer ${aCommander.length} T-shirt(s) commandé(s)</button>`:""}</div></div>
+  <div class="kpis">${kpi(payes.length,"T-shirts payés")}${kpi(K("Choisie"),"tailles choisies (à commander)","g")}${kpi(K("Non choisie"),"sans taille")}${kpi(K("Commandé"),"commandés")}${kpi(K("Remis"),"remis")}</div>
+  <div class="card"><h3>Bon de commande (tailles choisies, pas encore commandées)</h3>
+    <div class="tablewrap"><table><thead><tr>${parTaille.map(([t])=>`<th class="r">${t}</th>`).join("")}<th class="r">Total</th></tr></thead><tbody><tr>${parTaille.map(([,n])=>`<td class="r"><b>${n}</b></td>`).join("")}<td class="r"><b>${aCommander.length}</b></td></tr></tbody></table></div>
+    <p class="small muted">Toutes commandes confondues (choisies, commandées, remises) : ${parTaille.filter(([,,n])=>n).map(([t,,n])=>`${t} : ${n}`).join(" · ") || "aucune taille choisie"}.</p></div>
+  <div class="filters"><input type="search" id="tsq" placeholder="Matricule ou nom" value="${esc(f.q)}" aria-label="Recherche"><select id="tsst" aria-label="Statut">${opts(["Non choisie","Choisie","Commandé","Remis"], f.st, "Tous les statuts")}</select></div>
+  <div class="tablewrap"><table><thead><tr><th>Matricule</th><th>Nom</th><th>Niveau</th><th>T-shirt</th><th>Taille</th><th>Statut</th><th></th></tr></thead><tbody>
+  ${L.map(({s,t,paye,st})=>`<tr><td class="num">${esc(s.matricule)}</td><td><b>${esc(s.nom)}</b></td><td class="small">${esc(s.niveau||"")}</td><td>${paye?'<span class="pill ok">Payé</span>':'<span class="pill bad" title="Taille choisie mais T-shirt non payé">Non payé</span>'}</td>
+    <td>${gere && st!=="Remis" ? `<select data-tsz="${esc(s.matricule)}" aria-label="Taille de ${esc(s.nom)}" style="min-height:32px">${opts(TAILLES_TS, t?.taille, "—")}</select>` : `<b>${esc(t?.taille||"—")}</b>`}${t?.parGestion?'<br><span class="small muted">saisie par l\'équipe</span>':""}</td>
+    <td><span class="pill ${st==="Remis"?"ok":st==="Commandé"?"info":st==="Choisie"?"warn":"mute"}">${esc(st)}</span>${t?.choisiLe?`<br><span class="small muted">${dFR(t.choisiLe.slice(0,10))}</span>`:""}</td>
+    <td class="keep">${gere && st==="Commandé"?`<button class="btn sm vert" data-tsr="${esc(s.matricule)}">Remis</button>`:""}${gere && st==="Remis"?`<span class="small muted">${t.remisLe?dFR(t.remisLe.slice(0,10)):""}</span>`:""}</td></tr>`).join("") || `<tr><td colspan="7"><div class="empty">Aucun étudiant.</div></td></tr>`}
+  </tbody></table></div>
+  <p class="small muted">Après « commandé », l'étudiant ne peut plus changer sa taille ; l'équipe peut encore la corriger ici.</p>`;
+}
+async function majTshirt(mat, data, msg){
+  const s = etuBy(mat) || {}, ex = S.tshirts.find(t=>(t.matricule||t.id)===mat);
+  const d = {matricule:mat, nom:s.nom||ex?.nom||"", ...(ex||{}), ...data, majLe:nowISO(), majPar:compte().nom}; delete d.id;
+  return write(()=>S.db.doc("tshirts/"+mat).set(d), msg);
 }
 /* Requalification (Présidence) : « Vente de T-shirt (hors inscription) » → « Inscription (T-shirt inclus) ».
    Le montant, la date et la référence ne changent pas ; l'ancienne nature, l'auteur, la date et le motif sont conservés sur l'écriture. */
@@ -1612,6 +1648,23 @@ function bind(v){
     main.querySelectorAll("tr[data-tut]").forEach(tr=>tr.onclick=()=>{ S.tf.tuteur = tr.dataset.tut; render(); });
     on("#expTut","onclick",()=>exportCSV("CVPB_rapports_tutorat",["Date de l'activité","Tuteur","Spécialité","Niveau","Période","Types d'activité","Thème","Compte rendu","Attendus","Présents","Participation (1-5)","Observations","Difficultés","Nature des difficultés","Description","Intervention nécessaire","Situation à traiter","Actions entreprises","Actions prévues","Recommandations","Prochaine séance","Commentaire","Suivi","Réponse de la Commission"],
       S.T.rapports.map(r=>[String(r.dateActivite||"").replace("T"," "),r.tuteurNom,r.specialite,r.niveau,r.periode,(r.types||[]).join("; "),r.theme,r.compteRendu,r.attendus,r.presents,r.participation,r.obsParticipation,r.difficultes,(r.natures||[]).join("; "),r.descDifficultes,r.intervention,r.interventionDetail,r.actionsEntreprises,r.actionsPrevues,r.recommandations,String(r.prochaineSeance||"").replace("T"," "),r.commentaire,r.suivi?.statut||"Nouveau",r.suivi?.reponse||""])));
+  }
+  if (v==="tshirts"){
+    on("#tsq","oninput",e=>{ S.tsf.q = e.target.value; clearTimeout(S.tsT); S.tsT = setTimeout(()=>{ render(); const i=$("#tsq"); if(i){ i.focus(); i.setSelectionRange(i.value.length,i.value.length); } },350); });
+    on("#tsst","onchange",e=>{ S.tsf.st = e.target.value; render(); });
+    main.querySelectorAll("[data-tsz]").forEach(sel=>sel.onchange=()=>{ const m = sel.dataset.tsz, v = sel.value; if (!v) return; const ex = S.tshirts.find(t=>(t.matricule||t.id)===m);
+      majTshirt(m, {taille:v, statut: ex?.statut || "Choisie", choisiLe: ex?.choisiLe || nowISO(), parGestion:true}, `Taille ${v} enregistrée`); });
+    main.querySelectorAll("[data-tsr]").forEach(b=>b.onclick=()=>majTshirt(b.dataset.tsr, {statut:"Remis", remisLe:nowISO()}, "T-shirt remis"));
+    on("#tsCmd","onclick",async()=>{ const L = S.tshirts.filter(t=>(t.statut||"Choisie")==="Choisie" && tshirtPaye(t.matricule||t.id));
+      const rec = TAILLES_TS.map(t=>[t, L.filter(x=>x.taille===t).length]).filter(([,n])=>n).map(([t,n])=>`${t} : ${n}`).join(" · ");
+      if (!confirm(`Marquer ${L.length} T-shirt(s) comme commandés ?\n${rec}\n\nLes étudiants ne pourront plus changer leur taille.`)) return;
+      const le = nowISO(), par = compte().nom;
+      try { await S.db.lots(L.map(t=>{ const data = {...t, statut:"Commandé", commandeLe:le, commandePar:par, majLe:le, majPar:par}; delete data.id; return {path:"tshirts/"+(t.matricule||t.id), data}; }));
+        log("encaissement", `Commande de ${L.length} T-shirt(s) · ${rec}`, ["president","tresorerie","encaissement"]); toast(`${L.length} T-shirt(s) marqués commandés`); }
+      catch(e){ console.warn(e); toast("Échec : vérifiez la connexion et les règles Firebase."); } });
+    on("#tsExp","onclick",()=>{ const T = {}; S.tshirts.forEach(t=>T[t.matricule||t.id]=t);
+      const mats = [...new Set([...S.etudiants.filter(s=>s.statut!=="Inactif" && tshirtPaye(s.matricule)).map(s=>s.matricule), ...Object.keys(T)])];
+      exportCSV("CVPB_tshirts", ["Matricule","Nom","Niveau","Spécialité","T-shirt payé","Taille","Statut","Choisie le","Commandé le","Remis le"], mats.map(m=>{ const s = etuBy(m)||{}, t = T[m]||{}; return [m, s.nom||t.nom||"", s.niveau||"", s.specialite||"", tshirtPaye(m)?"Oui":"Non", t.taille||"", t.statut||(t.taille?"Choisie":"Non choisie"), (t.choisiLe||"").slice(0,10), (t.commandeLe||"").slice(0,10), (t.remisLe||"").slice(0,10)]; })); });
   }
   if (v==="pedagogie"){
     on("#newSea","onclick",()=>formSeance());
@@ -4306,6 +4359,7 @@ function abonnerProgramme(){
   sub("programme","programme", s => { S.programme = rows(s); });
   if (has("tuteurs","accompagnement","secretaire","formation")) sub("pointages_tutorat","pointagesTut", s => { S.pointagesTut = rows(s); });
   else if (tousMesRoles().includes("tuteur")) sub("pointages_tutorat","pointagesTut", s => { S.pointagesTut = rows(s); }, db.collection("pointages_tutorat").where("tuteurs","array-contains",S.email));
+  if (has("encaissement","tresorerie","caisse")) sub("tshirts","tshirts", s => { S.tshirts = rows(s); });
   if (has("secretaire","accompagnement")) sub("pointages_communaute","pointagesCom", s => { S.pointagesCom = rows(s); });
   else sub("pointages_communaute","pointagesCom", s => { S.pointagesCom = rows(s); }, db.collection("pointages_communaute").where("intervenants","array-contains",S.email));
 }
