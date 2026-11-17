@@ -1,6 +1,7 @@
 import { demarrer } from "./fb.js";
 import { firebaseConfig } from "./firebase-config.js";
-/* CVPB Manager v21 (17/11/2026) : programmation par formateurs et tuteurs, tutorat multi-spécialités, pointage des activités de la communauté. */
+/* CVPB Manager v22 (17/11/2026) : évaluations créées par les formateurs (TP, séances pratiques…), notes validées publiées dans CVPB Académie, référence d'encaissement automatique, T-shirt hors inscription retiré des natures.
+   v21 : programmation par formateurs et tuteurs, tutorat multi-spécialités, pointage des activités de la communauté. */
 
 /*CALC-START*/
 /* ======== Référentiels et calculs (fonctions pures) ======== */
@@ -58,6 +59,14 @@ function statsTutorat(docs, comptes, today){
 }
 const NATURES = ["Inscription (T-shirt inclus)","Cotisation mensuelle","Vente de T-shirt (hors inscription)","Don / Sponsoring","Participation à une activité","Autre recette"];
 const N_INSC = NATURES[0], N_COTI = NATURES[1];
+/* v22 : « Vente de T-shirt (hors inscription) » n'est plus proposée à la saisie (le T-shirt passe par l'inscription) ; les anciennes écritures restent lues */
+const NATURES_SAISIE = NATURES.filter((_,i)=>i!==2);
+/* v22 : référence générée automatiquement : MODE-AAMM-N° (ex. WV-2611-0038) */
+const CODE_MODE = {"Espèces":"ES","Wave":"WV","Orange Money":"OM","MTN MoMo":"MM","Moov Money":"MV","Virement bancaire":"VB"};
+const refAuto = (num, mode, date) => `${CODE_MODE[mode]||"AU"}-${String(date||"").slice(2,4)}${String(date||"").slice(5,7)}-${String(num||"").replace(/^ENC-/,"")}`;
+const refDe = e => e.ref || refAuto(e.num, e.mode, e.date);
+/* v22 : types d'évaluation proposés aux formateurs */
+const TYPES_EVAL = ["Devoir","Interrogation","Travaux pratiques","Séance pratique","Travail de groupe","Projet","Exposé","Participation","Examen","Autre"];
 const PARAM_DEFAUT = {
   annee:"2026-2027", prefixe:"CVPB-26-",
   tshirt:5000, inscription:7000, mensualite:5000,
@@ -141,7 +150,7 @@ function calculer(D, ref){
   /* --- Totaux registre --- */
   const totalEncaisse = encV.reduce((a,e)=>a+e.montant,0);
   const parNature = {}; for (const e of encV) parNature[e.nature] = (parNature[e.nature]||0) + e.montant;
-  const refs = {}; for (const e of encV){ if (e.ref){ const k = e.ref.trim().toUpperCase(); (refs[k] ||= []).push(e.num); } }
+  const refs = {}; for (const e of encV){ for (const r of new Set([e.ref, e.refOp].filter(Boolean).map(x=>x.trim().toUpperCase()))) (refs[r] ||= []).push(e.num); }
   const refsDoubles = Object.entries(refs).filter(([,v])=>v.length>1);
   const matsConnus = new Set(D.etudiants.map(s=>s.matricule));
   const matsInconnus = encV.filter(e=>e.matricule && !matsConnus.has(e.matricule));
@@ -791,7 +800,7 @@ function vRegistre(){
   if (f.statut==="valides") L = L.filter(valide); else if (f.statut==="annulees") L = L.filter(e=>!valide(e));
   if (f.nature) L = L.filter(e=>e.nature===f.nature);
   if (f.mois) L = L.filter(e=>e.mois===f.mois);
-  const q = normNom(f.q); if (q) L = L.filter(e=>normNom(e.num+" "+e.matricule+" "+e.nom+" "+e.payeur+" "+e.ref).includes(q));
+  const q = normNom(f.q); if (q) L = L.filter(e=>normNom(e.num+" "+e.matricule+" "+e.nom+" "+e.payeur+" "+refDe(e)+" "+(e.refOp||"")).includes(q));
   const tot = L.filter(valide).reduce((a,e)=>a+e.montant,0);
   return `<div class="spread"><h2>Registre des encaissements</h2><div class="row">${can("export")?`<button class="btn" id="expReg">Exporter (CSV)</button>`:""}${can("enc.saisir")?`<button class="btn primary" id="newEnc">+ Encaissement</button>`:""}</div></div>
   <div class="kpis">${Object.entries(C.parNature).map(([k,v],i)=>`<div class="kpi ${i%2?"g":""}"><span class="v">${F(v)}</span><span class="l">${esc(k)}</span></div>`).join("")}</div>
@@ -803,7 +812,7 @@ function vRegistre(){
   </div>
   <p class="small muted">${L.length} écriture(s) · total des écritures valides affichées : <b>${FC(tot)}</b>. Aucune écriture ne se supprime : une erreur s'annule avec motif.</p>
   <div class="tablewrap"><table><thead><tr><th>N°</th><th>Date</th><th>Matricule</th><th>Nom / payeur</th><th>Nature</th><th>Mois</th><th class="r">Montant</th><th>Mode</th><th>Référence</th><th>Encaissé par</th><th></th></tr></thead><tbody>
-  ${L.map(e=>`<tr class="${valide(e)?"":"annule"}"><td class="num keep">${esc(e.num)}</td><td>${dFR(e.date)}</td><td class="num">${esc(e.matricule||"—")}</td><td>${esc(e.nom||e.payeur||"—")}</td><td class="small">${esc(e.nature)}</td><td class="small">${esc(moisLib(e.mois))}</td><td class="r">${F(e.montant)}</td><td>${esc(e.mode)}</td><td class="num small">${esc(e.ref)}</td><td>${esc(e.encaissePar)}</td><td class="keep">${valide(e)?(can("enc.annuler")?`<button class="btn sm ghost" data-ann="${esc(e.num)}">Annuler</button>`:""):`<span class="pill bad" title="${esc(e.motif||"")}">Annulée</span>`}</td></tr>`).join("") || `<tr><td colspan="11"><div class="empty">Aucune écriture.</div></td></tr>`}
+  ${L.map(e=>`<tr class="${valide(e)?"":"annule"}"><td class="num keep">${esc(e.num)}</td><td>${dFR(e.date)}</td><td class="num">${esc(e.matricule||"—")}</td><td>${esc(e.nom||e.payeur||"—")}</td><td class="small">${esc(e.nature)}</td><td class="small">${esc(moisLib(e.mois))}</td><td class="r">${F(e.montant)}</td><td>${esc(e.mode)}</td><td class="num small">${esc(refDe(e))}${e.refOp?`<br><span class="muted">${esc(e.refOp)}</span>`:""}</td><td>${esc(e.encaissePar)}</td><td class="keep">${valide(e)?(can("enc.annuler")?`<button class="btn sm ghost" data-ann="${esc(e.num)}">Annuler</button>`:""):`<span class="pill bad" title="${esc(e.motif||"")}">Annulée</span>`}</td></tr>`).join("") || `<tr><td colspan="11"><div class="empty">Aucune écriture.</div></td></tr>`}
   </tbody></table></div>`;
 }
 const moisLib = c => S.C.mois.find(m=>m.code===c)?.libelle || c || "—";
@@ -844,12 +853,13 @@ function formEnc(matInit){
     <div id="n_sit"></div>
     <label class="f" for="n_py" id="n_pyw" hidden>Payeur hors liste<input type="text" id="n_py" maxlength="80"></label>
     <div class="g2">
-      <label class="f" for="n_na">Nature<select id="n_na">${opts(NATURES)}</select></label>
+      <label class="f" for="n_na">Nature<select id="n_na">${opts(NATURES_SAISIE)}</select></label>
       <label class="f" for="n_mo">Mois concerné<select id="n_mo">${opts(C.mois.map(m=>[m.code,m.libelle]), C.courant?.code, "—")}</select></label>
       <label class="f" for="n_mt">Montant encaissé (FCFA)<input type="number" id="n_mt" min="1" step="1" required><span class="hint">Mensualité de ${F(P().mensualite)} FCFA payable en plusieurs fois. Inscription ${F(P().inscription)} FCFA : le T-shirt obligatoire (${F(P().tshirt)} FCFA) se paie en une seule fois, le reste peut être échelonné.</span></label>
       <label class="f" for="n_d">Date<input type="date" id="n_d" value="${today()}" max="${today()}" required></label>
       <label class="f" for="n_md">Mode de paiement<select id="n_md">${opts(P().modes)}</select></label>
-      <label class="f" for="n_rf">Référence de la transaction<input type="text" id="n_rf" maxlength="40" placeholder="Ex. WV-NV-014"></label>
+      <div class="f"><span>Référence</span><b class="num" id="n_rfa" style="padding:8px 0">générée à l'enregistrement</b><span class="hint">Attribuée automatiquement : MODE-AAMM-N° (ex. WV-2611-0038).</span></div>
+      <label class="f" for="n_rf">N° de transaction de l'opérateur (facultatif)<input type="text" id="n_rf" maxlength="40" placeholder="ID Wave / Orange Money du SMS"></label>
       <label class="f" for="n_by">Encaissé par<select id="n_by">${opts(encs, c.nom)}</select></label>
       <label class="f" for="n_ob">Observations<input type="text" id="n_ob" maxlength="200"></label>
     </div>
@@ -877,6 +887,8 @@ function formEnc(matInit){
     const txt = mt > 0 ? (e ? affectationTxt(e, na, mt) : na===NATURES[2] && mt < P().tshirt ? `<b style="color:var(--bad)">Refusé : le T-shirt (${F(P().tshirt)} FCFA) se paie en une seule fois.</b>` : "") : "";
     $("#n_prev").innerHTML = txt ? `<div class="banner" style="border-color:var(--line)">${txt}</div>` : "";
   };
+  const majRef = () => { const n = S.encaissements.reduce((m,x)=>{ const v = parseInt(String(x.num||"").replace("ENC-",""),10); return isNaN(v)?m:Math.max(m,v); },0)+1; $("#n_rfa").textContent = refAuto("ENC-"+String(n).padStart(4,"0"), $("#n_md").value, $("#n_d").value) + " (prévisionnelle)"; };
+  $("#n_md").addEventListener("change", majRef); $("#n_d").addEventListener("change", majRef); majRef();
   $("#n_mt").oninput = () => { $("#n_mt").dataset.touched = "1"; apercu(); };
   $("#n_mo").onchange = () => { $("#n_mo").dataset.touched = "1"; };
   $("#n_m").oninput = suggest; $("#n_na").onchange = suggest; suggest();
@@ -893,12 +905,11 @@ function formEnc(matInit){
     const ts = P().tshirt, eS = m && C.etu[m];
     if (na===N_INSC && eS && eS.inscPayee < ts && eS.inscPayee + montant < ts){ toast(`Le T-shirt (${F(ts)} FCFA) se paie en une seule fois : versement minimum ${F(ts - eS.inscPayee)} FCFA.`); return; }
     if (na===NATURES[2] && montant < ts){ toast(`Le T-shirt (${F(ts)} FCFA) se paie en une seule fois.`); return; }
-    const ref = $("#n_rf").value.trim();
-    if ($("#n_md").value!=="Espèces" && !ref){ toast("La référence est obligatoire pour un paiement mobile ou bancaire."); return; }
-    if (ref && S.encaissements.some(e=>valide(e) && (e.ref||"").trim().toUpperCase()===ref.toUpperCase())){ toast("Cette référence de transaction existe déjà dans le registre."); return; }
+    const refOp = $("#n_rf").value.trim();
+    if (refOp && S.encaissements.some(e=>valide(e) && [e.refOp, e.ref].some(r=>(r||"").trim().toUpperCase()===refOp.toUpperCase()))){ toast("Ce numéro de transaction existe déjà dans le registre."); return; }
     let id;
     const ok = await write(async () => {
-      id = await numero("encaissements", "ENC-", S.encaissements, "num", id => ({num:id, date:$("#n_d").value, matricule:m||"", nom:s?.nom||"", payeur:m?"":payeur, niveau:s?.niveau||"", nature:na, mois:mo, montant, tranche:!!(m && trancheDe(C.etu[m], na, montant)), affectation:m ? affectationTxt(C.etu[m], na, montant).replace(/<[^>]+>/g,"") : "", mode:$("#n_md").value, ref, encaissePar:$("#n_by").value, statut:"Valide", obs:$("#n_ob").value.trim(), saisiPar:S.uid, saisiLe:nowISO()}));
+      id = await numero("encaissements", "ENC-", S.encaissements, "num", id => ({num:id, date:$("#n_d").value, matricule:m||"", nom:s?.nom||"", payeur:m?"":payeur, niveau:s?.niveau||"", nature:na, mois:mo, montant, tranche:!!(m && trancheDe(C.etu[m], na, montant)), affectation:m ? affectationTxt(C.etu[m], na, montant).replace(/<[^>]+>/g,"") : "", mode:$("#n_md").value, ref:refAuto(id, $("#n_md").value, $("#n_d").value), refOp, encaissePar:$("#n_by").value, statut:"Valide", obs:$("#n_ob").value.trim(), saisiPar:S.uid, saisiLe:nowISO()}));
     }, "Encaissement enregistré");
     if (ok){
       log("encaissement", `${id} · ${FC(montant)} · ${na} · ${s?.nom||payeur}`, ["president","tresorerie"], {montant}); closeSheet();
@@ -1115,9 +1126,10 @@ function vPedagogie(){
     <label class="f" for="nev" style="min-width:200px">Affichage<select id="nev">${opts([["","Récapitulatif et moyennes"], ...evs.map(e=>[e.id, `Saisir : ${e.libelle} (coef. ${e.coef||1})`])], ev?.id||"")}</select></label>
     ${vst?`<span class="pill ${vst==="Validées"?"ok":vst==="Retournées"?"bad":"warn"}" title="${esc(ND?.validation?.obs||"")}">Notes ${esc(vst.toLowerCase())}</span>`:""}
     ${valide && ND && vst!=="Validées"?`<button class="btn sm vert" data-notev="${esc(code)}">Valider les notes</button><button class="btn sm" data-noter="${esc(code)}">Retourner</button>`:""}
-    ${valide && vst==="Validées"?`<button class="btn sm" data-noteo="${esc(code)}">Rouvrir pour rectification</button>`:""}
-    ${role()==="secretaire" && vst==="Validées"?`<button class="btn sm" data-notec="${esc(code)}">Contrôler</button>`:""}</div>
-    ${sansEval?`<div class="banner">Aucune évaluation définie pour cette formation : une seule « Note finale » est utilisée. ${gereCatalogue()?`Définissez devoirs, TP et examens avec leurs coefficients dans <a href="#catalogue">Catalogue › fiche de la formation</a>.`:"Le Responsable Formation ou la Présidence peut définir les évaluations dans le catalogue."}</div>`:""}
+    ${valide && vst==="Validées"?`<button class="btn sm" data-noteo="${esc(code)}">Rouvrir pour rectification</button><button class="btn sm vert" id="notePub" data-code="${esc(code)}">Publier dans l'Académie</button>`:""}
+    ${role()==="secretaire" && vst==="Validées"?`<button class="btn sm" data-notec="${esc(code)}">Contrôler</button>`:""}
+    ${code && (gereCatalogue() || (estFormateurR() && (FX?.formateurs||[]).includes(S.email))) && S.formations.some(f=>f.code===code)?`<button class="btn sm primary" id="nevNew">+ Nouvelle évaluation</button>`:""}</div>
+    ${sansEval?`<div class="banner">Aucune évaluation définie pour cette formation : une seule « Note finale » est utilisée. Ajoutez vos devoirs, travaux pratiques, séances pratiques… avec « + Nouvelle évaluation ». ${gereCatalogue()?`Définissez devoirs, TP et examens avec leurs coefficients dans <a href="#catalogue">Catalogue › fiche de la formation</a>.`:"Le Responsable Formation ou la Présidence peut définir les évaluations dans le catalogue."}</div>`:""}
     ${vst==="Retournées"?`<div class="banner">Retournées par ${esc(ND.validation.par||"")} : ${esc(ND.validation.obs||"")}</div>`:""}
     ${verrou?`<p class="small muted">Notes validées le ${new Date(ND.validation.le).toLocaleDateString("fr-FR")} par ${esc(ND.validation.par)} : elles ne se modifient plus, sauf réouverture pour rectification.</p>`:""}
     <p class="small muted">Notes sur 20 · ABS = absent non justifié (compte 0) · EXC = excusé (hors moyenne). Moyenne pondérée par les coefficients. Formation validée si moyenne ≥ ${P().noteMin} et assiduité ≥ ${pct(P().assiduiteMin)}.</p>
@@ -1559,7 +1571,7 @@ function bind(v){
     on("#rnat","onchange",e=>{S.rf.nature=e.target.value;render();}); on("#rmois","onchange",e=>{S.rf.mois=e.target.value;render();}); on("#rst","onchange",e=>{S.rf.statut=e.target.value;render();});
     main.querySelectorAll("[data-ann]").forEach(b=>b.onclick=()=>annulerEnc(b.dataset.ann));
     on("#expReg","onclick",()=>exportCSV("CVPB_registre_encaissements",["N°","Date","Matricule","Nom","Payeur hors liste","Nature","Mois","Montant","Mode","Référence","Encaissé par","Écriture","Motif d'annulation","Observations"],
-      S.encaissements.slice().sort((a,b)=>a.num.localeCompare(b.num)).map(e=>[e.num,dFR(e.date),e.matricule,e.nom,e.payeur,e.nature,moisLib(e.mois),e.montant,e.mode,e.ref,e.encaissePar,e.statut,e.motif||"",e.obs||""])));
+      S.encaissements.slice().sort((a,b)=>a.num.localeCompare(b.num)).map(e=>[e.num,dFR(e.date),e.matricule,e.nom,e.payeur,e.nature,moisLib(e.mois),e.montant,e.mode,refDe(e)+(e.refOp?" / "+e.refOp:""),e.encaissePar,e.statut,e.motif||"",e.obs||""])));
   }
   if (v==="cotisations"){
     on("#csit","onchange",e=>{S.f.situation=e.target.value;render();});
@@ -1585,6 +1597,8 @@ function bind(v){
     on("#nfo","onchange",e=>{S.sub.noteForm=e.target.value;S.sub.noteEval="";render();});
     on("#saveNotes","onclick",()=>saveNotes($("#nfo").value, $("#nev").value));
     on("#nev","onchange",e=>{S.sub.noteEval=e.target.value;render();});
+    on("#nevNew","onclick",()=>nouvelleEvaluation($("#nfo").value));
+    on("#notePub","onclick",e=>publierNotes(e.currentTarget.dataset.code).then(n=>toast(n?`${n} relevé(s) publié(s) dans CVPB Académie`:"Aucune note à publier.")).catch(()=>toast("Publication impossible : vérifiez la connexion et les règles Firebase.")));
   }
   if (v==="admin"){
     on("#newCpt","onclick",()=>formCompte());
@@ -2649,7 +2663,7 @@ function ficheFormation(code){
   const maj = async (data, msg, action, statut, pour) => { if (await write(()=>S.db.doc("formations/"+code).update({...data, majLe:nowISO(), historique: ajoute(x.historique, trace(action, statut||st, obs()))}), msg)){ log("catalogue", `${x.code} : ${action}`, pour||["secretaire"]); closeSheet(); } };
   const formEval = i => { const e = i==null ? {type:"Devoir", coef:1} : x.evaluations[i];
     openSheet(`<h2>${i==null?"Nouvelle évaluation":"Modifier l'évaluation"} · ${esc(code)}</h2><form id="fe" class="form"><label class="f" for="e_l">Intitulé<input type="text" id="e_l" maxlength="60" value="${esc(e.libelle||"")}" placeholder="Ex. : Devoir 1, TP Excel, Examen final"></label>
-      <div class="g2"><label class="f" for="e_t">Type<select id="e_t">${opts(["Devoir","Interrogation","Travaux pratiques","Projet","Exposé","Examen"], e.type)}</select></label><label class="f" for="e_c">Coefficient<input type="number" id="e_c" min="0.5" max="10" step="0.5" value="${esc(e.coef||1)}"></label></div>
+      <div class="g2"><label class="f" for="e_t">Type<select id="e_t">${opts(TYPES_EVAL, e.type)}</select></label><label class="f" for="e_c">Coefficient<input type="number" id="e_c" min="0.5" max="10" step="0.5" value="${esc(e.coef||1)}"></label></div>
       <label class="f" for="e_d">Date prévue (facultatif)<input type="date" id="e_d" value="${esc(e.date||"")}"></label>
       <div class="row"><button class="btn primary" type="submit">Enregistrer</button><button class="btn ghost" type="button" data-close>Annuler</button></div></form>`);
     $("#fe").onsubmit = async ev => { ev.preventDefault(); const libelle = $("#e_l").value.trim(), coef = Number($("#e_c").value);
@@ -3025,6 +3039,37 @@ function finRendu(){
 setTimeout(() => { const sp = $("#splash"); if (sp){ sp.classList.add("out"); setTimeout(()=>sp.remove(), 600); } }, 6000);
 
 
+/* v22 : le formateur affecté (ou le Responsable Formation) ajoute une évaluation : devoir, TP, séance pratique, autre… */
+function nouvelleEvaluation(code){
+  const x = S.formations.find(f=>f.code===code); if (!x) return toast("Formation introuvable dans le catalogue.");
+  openSheet(`<h2>Nouvelle évaluation · ${esc(code)}</h2><p class="small muted">${esc(x.intitule)}</p><form id="fne" class="form">
+    <label class="f" for="ne_l">Intitulé<input type="text" id="ne_l" maxlength="60" placeholder="Ex. : TP Excel n°2, Séance pratique Canva, Exposé"></label>
+    <div class="g2"><label class="f" for="ne_t">Type<select id="ne_t">${opts(TYPES_EVAL, "Travaux pratiques")}</select></label><label class="f" for="ne_c">Coefficient<input type="number" id="ne_c" min="0.5" max="10" step="0.5" value="1"></label></div>
+    <label class="f" for="ne_d">Date (facultatif)<input type="date" id="ne_d" value="${today()}"></label>
+    <p class="small muted">Les notes sont sur 20. Après saisie, elles sont soumises au Responsable Formation ; une fois validées, chaque apprenant les voit dans son espace CVPB Académie.</p>
+    <div class="row"><button class="btn primary" type="submit">Créer l'évaluation</button><button class="btn ghost" type="button" data-close>Annuler</button></div></form>`);
+  $("#fne").onsubmit = async ev => { ev.preventDefault();
+    const libelle = $("#ne_l").value.trim(), coef = Number($("#ne_c").value), type = $("#ne_t").value;
+    if (libelle.length<2) return toast("Indiquez l'intitulé."); if (!(coef>0 && coef<=10)) return toast("Coefficient entre 0,5 et 10.");
+    if ((x.evaluations||[]).some(e=>normNom(e.libelle)===normNom(libelle))) return toast("Une évaluation porte déjà cet intitulé.");
+    const n = {id:"EV"+Date.now().toString(36), libelle, type, coef, date:$("#ne_d").value||"", creePar:compte().nom};
+    if (await write(()=>S.db.doc("formations/"+code).update({evaluations:[...(x.evaluations||[]), n], majLe:nowISO(), historique: ajoute(x.historique, trace(`Évaluation ajoutée par ${compte().nom} : ${libelle} (${type}, coef. ${coef})`, x.statut||"Ouverte"))}), "Évaluation créée")){
+      log("catalogue", `${code} : évaluation ${libelle} (${type}, coef. ${coef})`, ["formation"]); S.sub.noteForm = code; S.sub.noteEval = n.id; closeSheet(); render(); }
+  };
+}
+/* v22 : publication des notes validées vers l'espace CVPB Académie : une fiche par apprenant (il ne voit que la sienne) */
+async function publierNotes(code, retirer){
+  const FX = toutesFormations().find(f=>f.code===code), evs = evalsDe(FX), PE = notesParEval(S.notes.find(n=>n.id===code));
+  const mats = new Set(Object.values(PE).flatMap(m=>Object.keys(m)));
+  const ops = [...mats].map(mat => { const f = S.C.peda[mat]?.par?.[code] || {}, s = etuBy(mat) || {};
+    return {path:`notes_eleves/${code}_${mat}`, data: retirer ? {matricule:mat, formation:code, retire:true, majLe:nowISO()} : {
+      matricule:mat, nom:s.nom||"", formation:code, intitule:FX?.intitule||code, niveau:FX?.niveau||"",
+      evals: evs.map(e=>({id:e.id, libelle:e.libelle, type:e.type||"", coef:Number(e.coef)||1, date:e.date||"", note:(PE[e.id]||{})[mat] ?? null})).filter(e=>e.note!=null),
+      moyenne:f.moyenne ?? null, complet:!!f.complet, mention:f.mention||"", rang:f.rang||null, effectif:f.effectif||null, valide:f.valide ?? null,
+      retire:false, publieLe:nowISO(), publiePar:compte().nom}}; });
+  if (!ops.length) return 0;
+  await S.db.lots(ops); return ops.length;
+}
 /* Notes : validation par le Responsable Formation ; les messages aux étudiants partent après validation */
 function decisionNotes(code, act){
   const ND = S.notes.find(n=>n.id===code); if (!ND) return;
@@ -3039,6 +3084,7 @@ function decisionNotes(code, act){
     const lib = {v:"Notes validées", r:"Notes retournées pour correction", o:"Notes rouvertes pour rectification", c:"Contrôle du Secrétariat général"}[act];
     if (await write(()=>S.db.doc("notes/"+code).update({...data, historique: ajoute(ND.historique, trace(lib, act==="c" ? (ND.validation?.statut||"") : data.validation.statut, o))}), lib)){
       log("notes", `${code} : ${lib.toLowerCase()}${o?` · ${o}`:""}`, act==="c" ? ["formation"] : ["secretaire","pedagogie"]);
+      if (act==="v" || act==="o") publierNotes(code, act==="o").then(n => n && toast(act==="v" ? `${n} relevé(s) de notes publié(s) dans CVPB Académie` : "Notes retirées de CVPB Académie pendant la rectification")).catch(()=>toast("Notes validées, mais la publication vers CVPB Académie a échoué : réessayez « Valider ». "));
       if (act==="v"){ const L = Object.entries(S.C.peda).filter(([,p])=>p.par[code]?.moyenne!=null).map(([k,p])=>({matricule:k, ref:`${code}|${n20(p.par[code].moyenne)}`})); preparerMessages("note", L).then(M => M.length && toast(`${M.length} message(s) de note préparé(s) dans « WhatsApp étudiants »`)); }
       closeSheet();
     }
