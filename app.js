@@ -1,5 +1,6 @@
 import { demarrer } from "./fb.js";
 import { firebaseConfig } from "./firebase-config.js";
+/* CVPB Manager v21 (17/11/2026) : programmation par formateurs et tuteurs, tutorat multi-spécialités, pointage des activités de la communauté. */
 
 /*CALC-START*/
 /* ======== Référentiels et calculs (fonctions pures) ======== */
@@ -272,7 +273,7 @@ function confirmBtn(btn, label, fn){ btn.onclick = () => { if (btn.dataset.sure!
 /* ======== État ======== */
 const S = {
   db:null, fb:null, uid:null, email:null, moi:null, sansConfig:false, authPret:false, stale:false, jx:[], rapportsEquipe:[], demandesCours:[], rapportsDelegues:[], notesTuteurs:[], decisions:[], taches:[], reunions:[], audit:[],
-  etudiants:[], prive:{}, encaissements:[], depots:[], operations:[], seances:[], notes:[], programme:[], pointagesTut:[], params:null, comptes:{}, demandes:{}, journal:[], journalPub:[], journalFin:[], tut:[], T:null, etat:{}, tf:{tuteur:"", statut:"", spec:""},
+  etudiants:[], prive:{}, encaissements:[], depots:[], operations:[], seances:[], notes:[], programme:[], pointagesTut:[], pointagesCom:[], params:null, comptes:{}, demandes:{}, journal:[], journalPub:[], journalFin:[], tut:[], T:null, etat:{}, tf:{tuteur:"", statut:"", spec:""},
   loaded:{}, C:null, pf:{types:["academie","tutorat","communaute","reunion"], vue:"semaine", ref:"", miens:false}, sub:{equipe:"", delegues:"demandes", caisse:"synthese", pedagogie:"seances", admin:"comptes", etudiants:""},
   f:{q:"", niveau:"", situation:"", spec:""}, rf:{q:"", nature:"", mois:"", statut:"valides"},
   firstJournal:true,
@@ -3904,8 +3905,18 @@ function abonnerEquipe(){
    ===================================================================== */
 const TYPES_PROG = {academie:["CVPB Académie","#5fdc74"], tutorat:["Tutorat","#5aa9ff"], communaute:["Communauté","#f2b84b"], reunion:["Réunion","#b48cff"]};
 const MODES_PROG = ["Présentiel","En ligne","Hybride"];
-const peutProgrammer = t => presidence() || (t==="academie" && aRole("formation")) || (t==="tutorat" && aRole("tuteurs")) || (t==="communaute" && aRole("secretaire"));
-const typesProgrammables = () => ["academie","tutorat","communaute"].filter(peutProgrammer);
+/* v21 : les formateurs programment les séances de LEURS formations, les tuteurs leurs séances de tutorat ;
+   chacun ne modifie ensuite que ce qu'il a lui-même programmé. */
+const estFormateurR = () => tousMesRoles().includes("pedagogie");
+const peutProgrammer = (t, e) => presidence()
+  || (t==="academie" && (aRole("formation") || (estFormateurR() && (!e || e.creeParEmail===S.email))))
+  || (t==="tutorat" && (aRole("tuteurs") || (estTuteurR() && (!e || e.creeParEmail===S.email))))
+  || (t==="communaute" && aRole("secretaire"));
+/* v21 : une séance de tutorat peut réunir plusieurs spécialités (même niveau) */
+const specsDe = e => (e?.specialites||[]).length ? e.specialites : [e?.specialite].filter(Boolean);
+const groupesDe = e => specsDe(e).map(sp => `${sp} · ${e.niveau}`);
+const libSpecs = e => `${specsDe(e).map(codeSp).join(" + ")} ${e.niveau||""}`.trim();
+const typesProgrammables = () => ["academie","tutorat","communaute"].filter(t => peutProgrammer(t));
 const addJours = (d, n) => { const x = parseD(d); x.setDate(x.getDate()+n); return isoD(x); };
 const pillProg = st => `<span class="pill ${st==="Annulée"?"bad":st==="Reportée"?"warn":st==="Tenue"?"ok":"mute"}">${esc(st||"Programmée")}</span>`;
 const heuresProg = e => e.hDebut ? `${e.hDebut.replace(":","h")}${e.hFin?"–"+e.hFin.replace(":","h"):""}` : "Toute la journée";
@@ -3924,7 +3935,7 @@ function evenements(){
 function meConcerne(e){
   const c = compte(); if (!c) return false;
   if ((e.intervenants||[]).includes(S.email) || e.creeParEmail===S.email) return true;
-  if (e.type==="tutorat" && c.specialite && e.specialite===c.specialite && (!e.niveau || e.niveau===c.niveau)) return true;
+  if (e.type==="tutorat" && c.specialite && specsDe(e).includes(c.specialite) && (!e.niveau || e.niveau===c.niveau)) return true;
   if (e.type==="academie" && c.niveau){ const f = toutesFormations().find(x=>x.code===e.formation), nv = String(f?.niveau||""); return !nv || /Tous/.test(nv) || nv===c.niveau || (nv.includes("2 et 3") && /Licence [23]/.test(c.niveau)); }
   return e.type==="communaute";
 }
@@ -3932,7 +3943,7 @@ function evFiltres(){ return evenements().filter(e => S.pf.types.includes(e.type
 
 function carteEv(e){
   const [lib, col] = TYPES_PROG[e.type]||["",""];
-  const sous = e.type==="academie" ? [e.formation && `${e.formation}`, e.module].filter(Boolean).join(" · ") : e.type==="tutorat" ? groupeLib(`${e.specialite||""} · ${e.niveau||""}`) : "";
+  const sous = e.type==="academie" ? [e.formation && `${e.formation}`, e.module].filter(Boolean).join(" · ") : e.type==="tutorat" ? libSpecs(e) : "";
   const inter = (e.intervenants||[]).slice(0,3).map(nomDe).join(", ") + ((e.intervenants||[]).length>3?"…":"");
   return `<button type="button" class="evt ${e.statut==="Annulée"?"annule":""}" data-ev="${esc(e.id)}" style="--c:${col}"><span class="h">${esc(heuresProg(e))}</span><span class="t">${esc(e.titre)}</span><span class="m">${esc(lib)}${sous?` · ${esc(sous)}`:""}${e.type!=="reunion"&&inter?` · ${esc(inter)}`:""}${e.lieu?` · ${esc(e.lieu)}`:e.mode==="En ligne"?" · En ligne":""}</span>${e.statut&&e.statut!=="Programmée"?pillProg(e.statut):""}</button>`;
 }
@@ -3957,7 +3968,7 @@ function vProgramme(){
     corps = jours.length ? `<div class="semaine liste">${jours.map(d=>`<section class="jour ${d===aujourd?"auj":""}"><h3>${esc(jourLong(d))}</h3>${A.filter(e=>e.date===d).map(carteEv).join("")}</section>`).join("")}</div>` : `<div class="empty">Rien de programmé dans les 60 prochains jours${f.miens?" pour vous":""}.</div>`;
   }
   const aVenir = evenements().filter(e=>e.date>=aujourd && e.statut!=="Annulée");
-  const aPointer = S.programme.filter(e=>["academie","tutorat"].includes(e.type) && e.date<aujourd && e.statut!=="Annulée" && e.statut!=="Tenue" && peutPointer(e));
+  const aPointer = S.programme.filter(e=>["academie","tutorat","communaute"].includes(e.type) && e.date<aujourd && e.statut!=="Annulée" && e.statut!=="Tenue" && peutPointer(e));
   return `<div class="spread"><div><h2>Programme de la communauté</h2><p class="small muted">Formations de la CVPB Académie, séances de tutorat, activités et réunions. ${typesProgrammables().length?`Vous pouvez programmer : ${typesProgrammables().map(t=>TYPES_PROG[t][0]).join(", ")}.`:"Consultation."}</p></div>
     <div class="row">${typesProgrammables().length?`<button class="btn primary" id="pgNew">${ICO.nouveau} Programmer</button>`:""}<button class="btn" id="pgIcs" title="Fichier à ouvrir avec Google Agenda ou l'agenda du téléphone">Ajouter à mon agenda</button></div></div>
   <div class="kpis">${kpi(aVenir.filter(e=>e.date<=addJours(aujourd,6)).length,"cette semaine","g")}${kpi(aVenir.filter(e=>e.type==="academie").length,"formations à venir")}${kpi(aVenir.filter(e=>e.type==="tutorat").length,"séances de tutorat à venir")}${aPointer.length?kpi(aPointer.length,"séances passées à pointer","warn"):""}</div>
@@ -3993,21 +4004,22 @@ function blocProgramme(){
 const peutPointer = e => {
   if (e.type==="academie") return presidence() || aRole("formation") || ((tousMesRoles().includes("pedagogie")) && (toutesFormations().find(f=>f.code===e.formation)?.formateurs||[]).includes(S.email));
   if (e.type==="tutorat") return presidence() || aRole("tuteurs") || (e.intervenants||[]).includes(S.email);
+  if (e.type==="communaute") return presidence() || aRole("secretaire") || (e.intervenants||[]).includes(S.email);
   return false;
 };
 
 function ficheProg(id){
   const e = evenements().find(x=>x.id===id); if (!e) return toast("Événement introuvable.");
   if (e.type==="reunion") return ficheReunion(e.reunionId);
-  const [lib, col] = TYPES_PROG[e.type], gere = peutProgrammer(e.type), passe = e.date <= today();
+  const [lib, col] = TYPES_PROG[e.type], gere = peutProgrammer(e.type, e), passe = e.date <= today();
   const F = e.formation ? toutesFormations().find(f=>f.code===e.formation) : null;
   const dem = e.demande ? S.demandesCours.find(d=>d.id===e.demande) : null;
-  const se = e.seanceId ? S.seances.find(x=>x.id===e.seanceId) : null, pt = S.pointagesTut.find(x=>x.id===e.id);
+  const se = e.seanceId ? S.seances.find(x=>x.id===e.seanceId) : null, pt = S.pointagesTut.find(x=>x.id===e.id) || (S.pointagesCom||[]).find(x=>x.id===e.id);
   const resume = pres => { const v = Object.values(pres||{}).filter(Boolean), c = k=>v.filter(x=>x===k).length; return `${c("P")+c("R")}/${v.length} présents · ${c("R")} retard(s) · ${c("J")} absence(s) justifiée(s) · ${c("A")} absence(s)`; };
   openSheet(`<div class="spread"><div><span class="pill" style="background:${col}22;color:inherit;border:1px solid ${col}">${esc(lib)}</span><h2 style="margin-top:6px">${esc(e.titre)}</h2><p class="small muted">${esc(jourLong(e.date))} · ${esc(heuresProg(e))}</p></div>${pillProg(e.statut)}</div>
     <dl class="dl">
       ${F?`<dt>Formation</dt><dd>${esc(F.code)} · ${esc(F.intitule)}${e.module?`<br><span class="small">Module : ${esc(e.module)}</span>`:""}</dd>`:""}
-      ${e.type==="tutorat"?`<dt>Groupe</dt><dd>${esc(groupeLib(`${e.specialite} · ${e.niveau}`))}</dd>`:""}
+      ${e.type==="tutorat"?`<dt>${specsDe(e).length>1?"Groupes":"Groupe"}</dt><dd>${esc(libSpecs(e))}</dd>`:""}
       ${e.type==="communaute"&&e.public?`<dt>Public</dt><dd>${esc(e.public)}</dd>`:""}
       <dt>${e.type==="tutorat"?"Tuteur(s)":"Intervenant(s)"}</dt><dd>${(e.intervenants||[]).map(nomDe).map(esc).join(", ")||"—"}</dd>
       <dt>Lieu</dt><dd>${esc(e.mode||"")}${e.lieu?` · ${esc(e.lieu)}`:""}${e.lien?`<br><a href="${esc(e.lien)}" target="_blank" rel="noopener">Rejoindre / ouvrir le lien</a>`:""}</dd>
@@ -4028,7 +4040,7 @@ function ficheProg(id){
   const on = (s, fn) => { const el = $(s); if (el) el.onclick = fn; };
   on("#pgCal", () => exporterIcs([e], "CVPB_"+normNom(e.titre).replace(/ /g,"_")));
   on("#pgEd", () => formProg(e.id));
-  on("#pgPt", () => e.type==="academie" ? (se ? formSeance(se.id) : formSeance(null, {date:e.date, formation:e.formation, programme:e.id})) : formPointageTut(e.id));
+  on("#pgPt", () => e.type==="academie" ? (se ? formSeance(se.id) : formSeance(null, {date:e.date, formation:e.formation, programme:e.id})) : e.type==="communaute" ? formPointageCom(e.id) : formPointageTut(e.id));
   const an = $("#pgAn"); an && confirmBtn(an, "Confirmer l'annulation", async () => {
     const mo = ($("#pg_mo")?.value||"").trim(); if (mo.length<3) return toast("Indiquez le motif de l'annulation.");
     if (await write(()=>S.db.doc("programme/"+e.id).update({statut:"Annulée", motif:mo, majLe:nowISO(), historique:ajoute(e.historique, trace("Annulation","Annulée", mo))}), "Séance annulée")){ log("programme", `Annulé : ${e.titre} du ${dFR(e.date)} · ${mo}`, destinatairesProg(e)); closeSheet(); }
@@ -4040,7 +4052,7 @@ function ficheProg(id){
 function destinatairesProg(e){
   const inter = (e.intervenants||[]).map(x=>"e:"+x);
   if (e.type==="communaute") return ["tous"];
-  if (e.type==="tutorat") return ["tuteurs","accompagnement", ...inter, ...delegsDuGroupe(`${e.specialite} · ${e.niveau}`).map(d=>"e:"+d.em)];
+  if (e.type==="tutorat") return ["tuteurs","accompagnement", ...inter, ...groupesDe(e).flatMap(g=>delegsDuGroupe(g).map(d=>"e:"+d.em))];
   return ["formation","pedagogie","accompagnement", ...inter];
 }
 
@@ -4048,7 +4060,8 @@ function formProg(id){
   const ex = id ? S.programme.find(x=>x.id===id) : null;
   const types = ex ? [ex.type] : typesProgrammables(); if (!types.length) return;
   const st = {type: ex?.type || (types.includes("academie") ? "academie" : types[0]), ...ex};
-  const forms = toutesFormations().filter(f=>!["Archivée","Brouillon","Clôturée"].includes(f.statut));
+  const forms = toutesFormations().filter(f=>!["Archivée","Brouillon","Clôturée"].includes(f.statut))
+    .filter(f => presidence() || aRole("formation") || (f.formateurs||[]).includes(S.email));
   const tous = actifsTous();
   openSheet(`<h2>${ex?"Modifier ou reporter":"Programmer"}</h2>
   <form id="pgf" class="form">
@@ -4071,21 +4084,26 @@ function formProg(id){
       const fc = st.formation && forms.some(f=>f.code===st.formation) ? st.formation : forms[0]?.code;
       const F = forms.find(f=>f.code===fc) || {}, fo = F.formateurs||[];
       const L = [...tous.filter(c=>fo.includes(c.em)).map(c=>({...c, tag:"formateur de la formation"})), ...tous.filter(c=>!fo.includes(c.em) && rolesDe(c).some(r=>["pedagogie","formation","tuteur","president"].includes(r)))];
+      /* v21 : le formateur qui programme figure toujours dans la liste */
+      if (!L.some(c=>c.em===S.email) && (fo.includes(S.email) || estFormateurR())) L.unshift({em:S.email, nom:compte()?.nom||S.email, tag:"vous"});
       z.innerHTML = forms.length ? `<div class="g2"><label class="f" for="pg_fo">Formation<select id="pg_fo">${opts(forms.map(f=>[f.code, `${f.code} · ${f.intitule}`]), fc)}</select></label>
         <label class="f" for="pg_md">Module<select id="pg_md">${opts((F.modules||[]).map(m=>[m.titre, m.titre]), st.module||"", "— Aucun / plusieurs —")}</select></label></div>
         <fieldset class="f"><legend>Intervenant(s)</legend>${coches("pg_in", L, cur.length?cur:fo)}<span class="hint">Seuls les formateurs affectés à la formation (catalogue), le Responsable Formation et la Présidence peuvent pointer.</span></fieldset>`
         : `<div class="banner">Aucune formation active dans le catalogue. Créez d'abord la formation dans <a href="#catalogue">Catalogue des formations</a>.</div>`;
       $("#pg_fo") && ($("#pg_fo").onchange = e => { st.formation = e.target.value; st.module = ""; st.intervenants = []; drawSpec(); });
     } else if (t==="tutorat"){
-      const sp = st.specialite || SPECS_FORM[0], nv = st.niveau || (P().niveaux||[])[0] || "Licence 1", g = `${sp} · ${nv}`;
-      const tutG = tuteursDuGroupe(g).map(c=>c.em);
+      const sps = specsDe(st).length ? specsDe(st) : [compte()?.specialite && SPECS_FORM.includes(compte().specialite) ? compte().specialite : SPECS_FORM[0]];
+      const sp = sps[0], nv = st.niveau || (estTuteurR() && compte()?.niveau) || (P().niveaux||[])[0] || "Licence 1", g = `${sp} · ${nv}`;
+      const tutG = [...new Set(sps.flatMap(x=>tuteursDuGroupe(`${x} · ${nv}`).map(c=>c.em)))];
       const L = [...tous.filter(c=>tutG.includes(c.em)).map(c=>({...c, tag:"tuteur du groupe"})), ...tous.filter(c=>!tutG.includes(c.em) && rolesDe(c).includes("tuteur")).map(c=>({...c, tag:groupeLib(groupeDe(c))}))];
+      if (estTuteurR() && !L.some(c=>c.em===S.email)) L.unshift({em:S.email, nom:compte()?.nom||S.email, tag:"vous"});
       const dems = S.demandesCours.filter(d=>d.groupe===g && !["Clôturée","Rejetée"].includes(d.statut));
-      z.innerHTML = `<div class="g2"><label class="f" for="pg_sp">Spécialité<select id="pg_sp">${opts(SPECS_FORM.map(x=>[x, codeSp(x)]), sp)}</select></label><label class="f" for="pg_nv">Niveau<select id="pg_nv">${opts(P().niveaux||["Licence 1","Licence 2","Licence 3"], nv)}</select></label></div>
+      z.innerHTML = `<fieldset class="f"><legend>Spécialité(s) concernée(s)</legend><div class="checks" id="pg_sps">${SPECS_FORM.map(x=>`<label><input type="checkbox" value="${esc(x)}" ${sps.includes(x)?"checked":""}> ${esc(codeSp(x))}</label>`).join("")}</div><span class="hint">Cochez plusieurs spécialités pour une séance commune (ex. IAN-DAS + IAN-RSI).</span></fieldset>
+        <label class="f" for="pg_nv">Niveau<select id="pg_nv">${opts(P().niveaux||["Licence 1","Licence 2","Licence 3"], nv)}</select></label>
         <label class="f" for="pg_dm">Répond à une demande de délégué (facultatif)<select id="pg_dm">${opts(dems.map(d=>[d.id, `${d.type==="cours"?"Cours à expliquer":"Demande"} · ${d.matiere} · ${d.delegueNom||""}`]), st.demande||"", dems.length?"— Aucune —":"— Aucune demande en cours pour ce groupe —")}</select></label>
         <fieldset class="f"><legend>Tuteur(s)</legend>${coches("pg_in", L, cur.length?cur:tutG)}<span class="hint">Les tuteurs cochés pourront pointer les présences de la séance.</span></fieldset>`;
-      const re = () => { st.specialite = $("#pg_sp").value; st.niveau = $("#pg_nv").value; st.intervenants = []; st.demande = ""; drawSpec(); };
-      $("#pg_sp").onchange = re; $("#pg_nv").onchange = re;
+      const re = () => { const ch = [...$("#pg_sps").querySelectorAll("input:checked")].map(i=>i.value); st.specialites = ch.length ? ch : [sp]; st.specialite = st.specialites[0]; st.niveau = $("#pg_nv").value; st.intervenants = []; st.demande = ""; drawSpec(); };
+      $("#pg_sps").querySelectorAll("input").forEach(i => i.onchange = re); $("#pg_nv").onchange = re;
       $("#pg_dm").onchange = e => { const d = dems.find(x=>x.id===e.target.value); if (d && !$("#pg_ti").value.trim()) $("#pg_ti").value = `Tutorat · ${d.matiere}`; if (d && !$("#pg_de").value.trim()) $("#pg_de").value = d.besoin||""; };
     } else {
       z.innerHTML = `<label class="f" for="pg_pu">Public concerné<input type="text" id="pg_pu" maxlength="120" value="${esc(st.public||"")}" placeholder="Ex. : tous les membres, nouveaux bacheliers…"></label>
@@ -4106,9 +4124,9 @@ function formProg(id){
     if (d.lien && !/^https?:\/\//i.test(d.lien)) return toast("Le lien doit commencer par https://");
     if (!d.lieu && d.mode!=="En ligne") return toast("Indiquez le lieu.");
     if (t==="academie"){ if (!$("#pg_fo")) return toast("Aucune formation disponible."); d.formation = $("#pg_fo").value; d.module = $("#pg_md").value; if (!intervenants.length) return toast("Choisissez au moins un intervenant."); }
-    if (t==="tutorat"){ d.specialite = $("#pg_sp").value; d.niveau = $("#pg_nv").value; d.demande = $("#pg_dm").value; if (!intervenants.length) return toast("Choisissez au moins un tuteur."); }
+    if (t==="tutorat"){ d.specialites = [...$("#pg_sps").querySelectorAll("input:checked")].map(i=>i.value); if (!d.specialites.length) return toast("Cochez au moins une spécialité."); d.specialite = d.specialites[0]; d.niveau = $("#pg_nv").value; d.demande = $("#pg_dm").value; if (!intervenants.length) return toast("Choisissez au moins un tuteur."); }
     if (t==="communaute") d.public = $("#pg_pu").value.trim();
-    const auto = t==="academie" ? `${nomForm(d.formation)||d.formation}${d.module?` · ${d.module}`:""}` : t==="tutorat" ? `Tutorat ${groupeLib(`${d.specialite} · ${d.niveau}`)}` : "";
+    const auto = t==="academie" ? `${nomForm(d.formation)||d.formation}${d.module?` · ${d.module}`:""}` : t==="tutorat" ? `Tutorat ${libSpecs(d)}` : "";
     d.titre = $("#pg_ti").value.trim() || auto; if (d.titre.length<3) return toast("Indiquez le titre.");
     if (ex){
       const reporte = ex.date!==date || ex.hDebut!==hDebut, mt = $("#pg_mt").value.trim();
@@ -4132,8 +4150,8 @@ function formProg(id){
 function formPointageTut(id){
   const e = S.programme.find(x=>x.id===id); if (!e) return;
   const ex = S.pointagesTut.find(x=>x.id===id), pr = {...(ex?.presences||{})};
-  const L = S.etudiants.filter(s=>s.statut!=="Inactif" && memeSpec(s.specialite, e.specialite) && s.niveau===e.niveau).sort((a,b)=>a.nom.localeCompare(b.nom,"fr"));
-  openSheet(`<h2>Pointage · ${esc(e.titre)}</h2><p class="small muted">${esc(jourLong(e.date))} · ${esc(groupeLib(`${e.specialite} · ${e.niveau}`))} · P présent · R retard · J absent justifié · A absent</p>
+  const L = S.etudiants.filter(s=>s.statut!=="Inactif" && specsDe(e).some(sp=>memeSpec(s.specialite, sp)) && s.niveau===e.niveau).sort((a,b)=>a.nom.localeCompare(b.nom,"fr"));
+  openSheet(`<h2>Pointage · ${esc(e.titre)}</h2><p class="small muted">${esc(jourLong(e.date))} · ${esc(libSpecs(e))} · P présent · R retard · J absent justifié · A absent</p>
     <div class="row"><button class="btn sm" type="button" id="pt_all">Tous présents</button><span class="small muted">Laisser vide = non concerné.</span></div>
     <div class="plist" id="pt_l">${L.map(s=>`<div class="prow"><span>${esc(s.nom)} <span class="small muted num">${esc(s.matricule)}</span></span><span class="seg" data-who="${esc(s.matricule)}">${["P","R","J","A"].map(v=>`<button type="button" data-v="${v}" aria-pressed="${pr[s.matricule]===v}">${v}</button>`).join("")}</span></div>`).join("") || `<div class="empty">Aucun étudiant enregistré pour ce groupe.</div>`}</div>
     <label class="f" for="pt_o">Observations (facultatif)<textarea id="pt_o" maxlength="800">${esc(ex?.obs||"")}</textarea></label>
@@ -4144,10 +4162,38 @@ function formPointageTut(id){
   $("#pt_ok").onclick = async () => {
     const presences = Object.fromEntries(Object.entries(pr).filter(([,v])=>v));
     if (!Object.keys(presences).length) return toast("Pointez au moins un étudiant.");
-    const data = {programme:id, date:e.date, titre:e.titre, specialite:e.specialite, niveau:e.niveau, tuteurs:e.intervenants||[], presences, obs:$("#pt_o").value.trim(), par:S.email, parNom:compte().nom, le:nowISO(), historique:ajoute(ex?.historique, trace(ex?"Pointage modifié":"Pointage","Tenue"))};
+    const data = {programme:id, date:e.date, titre:e.titre, specialite:e.specialite, specialites:specsDe(e), niveau:e.niveau, tuteurs:e.intervenants||[], presences, obs:$("#pt_o").value.trim(), par:S.email, parNom:compte().nom, le:nowISO(), historique:ajoute(ex?.historique, trace(ex?"Pointage modifié":"Pointage","Tenue"))};
     if (await write(()=>S.db.doc("pointages_tutorat/"+id).set(data), "Présences enregistrées")){
       S.db.doc("programme/"+id).update({statut:"Tenue", pointeLe:nowISO(), pointePar:compte().nom, historique:ajoute(e.historique, trace("Séance pointée","Tenue"))}).catch(()=>{});
       const v = Object.values(presences); log("programme", `Tutorat pointé : ${e.titre} du ${dFR(e.date)} · ${v.filter(x=>x==="P"||x==="R").length}/${v.length} présents`, ["tuteurs","accompagnement"]); closeSheet();
+    }
+  };
+}
+
+/* v21 : pointage d'une activité de la communauté (tous les étudiants actifs, recherche par nom) */
+function formPointageCom(id){
+  const e = S.programme.find(x=>x.id===id); if (!e) return;
+  const ex = (S.pointagesCom||[]).find(x=>x.id===id), pr = {...(ex?.presences||{})};
+  const L = S.etudiants.filter(s=>s.statut!=="Inactif").sort((a,b)=>a.nom.localeCompare(b.nom,"fr"));
+  openSheet(`<h2>Pointage · ${esc(e.titre)}</h2><p class="small muted">${esc(jourLong(e.date))} · Activité de la communauté · P présent · R retard · J absent justifié · A absent</p>
+    <label class="f" for="pc_q">Rechercher<input type="search" id="pc_q" placeholder="Nom ou matricule"></label>
+    <div class="row"><button class="btn sm" type="button" id="pc_all">Tous présents</button><span class="small muted">Laisser vide = non concerné.</span><span class="small muted" id="pc_n"></span></div>
+    <div class="plist" id="pc_l">${L.map(s=>`<div class="prow" data-q="${esc((s.nom+" "+s.matricule).toLowerCase())}"><span>${esc(s.nom)} <span class="small muted num">${esc(s.matricule)} · ${esc(s.niveau||"")}</span></span><span class="seg" data-who="${esc(s.matricule)}">${["P","R","J","A"].map(v=>`<button type="button" data-v="${v}" aria-pressed="${pr[s.matricule]===v}">${v}</button>`).join("")}</span></div>`).join("") || `<div class="empty">Aucun étudiant enregistré.</div>`}</div>
+    <label class="f" for="pc_o">Observations (facultatif)<textarea id="pc_o" maxlength="800">${esc(ex?.obs||"")}</textarea></label>
+    <div class="row"><button class="btn primary" id="pc_ok">Enregistrer le pointage</button><button class="btn" data-close>Annuler</button></div>`);
+  const compter = () => { const v = Object.values(pr).filter(Boolean); $("#pc_n").textContent = `${v.filter(x=>x==="P"||x==="R").length} présent(s) / ${v.length} pointé(s)`; };
+  const maj = () => { $("#pc_l").querySelectorAll(".seg").forEach(sg => sg.querySelectorAll("button").forEach(x=>x.setAttribute("aria-pressed", pr[sg.dataset.who]===x.dataset.v))); compter(); };
+  $("#pc_l").querySelectorAll(".seg button").forEach(b => b.onclick = () => { const w = b.parentElement.dataset.who; pr[w] = pr[w]===b.dataset.v ? "" : b.dataset.v; maj(); });
+  $("#pc_q").oninput = ev => { const q = ev.target.value.trim().toLowerCase(); $("#pc_l").querySelectorAll(".prow").forEach(r => r.style.display = !q || r.dataset.q.includes(q) ? "" : "none"); };
+  $("#pc_all").onclick = () => { L.forEach(s=>pr[s.matricule]="P"); maj(); };
+  compter();
+  $("#pc_ok").onclick = async () => {
+    const presences = Object.fromEntries(Object.entries(pr).filter(([,v])=>v));
+    if (!Object.keys(presences).length) return toast("Pointez au moins un étudiant.");
+    const data = {programme:id, type:"communaute", date:e.date, titre:e.titre, intervenants:e.intervenants||[], presences, obs:$("#pc_o").value.trim(), par:S.email, parNom:compte().nom, le:nowISO(), historique:ajoute(ex?.historique, trace(ex?"Pointage modifié":"Pointage","Tenue"))};
+    if (await write(()=>S.db.doc("pointages_communaute/"+id).set(data), "Présences enregistrées")){
+      S.db.doc("programme/"+id).update({statut:"Tenue", pointeLe:nowISO(), pointePar:compte().nom, historique:ajoute(e.historique, trace("Activité pointée","Tenue"))}).catch(()=>{});
+      const v = Object.values(presences); log("programme", `Activité pointée : ${e.titre} du ${dFR(e.date)} · ${v.filter(x=>x==="P"||x==="R").length}/${v.length} présents`, ["secretaire","president"]); closeSheet();
     }
   };
 }
@@ -4174,7 +4220,7 @@ function blocPedaEtu(mat){
   const s = etuBy(mat), p = S.C.peda[mat]; if (!s || !p) return "";
   const forms = Object.entries(p.par), valides = forms.filter(([,f])=>f.valide===true).length;
   const ND = code => notesParEval(S.notes.find(n=>n.id===code));
-  const prochains = evenements().filter(e=>e.date>=today() && e.statut!=="Annulée" && ((e.type==="tutorat" && memeSpec(s.specialite, e.specialite) && e.niveau===s.niveau) || (e.type==="academie" && s.academie && apprenantsPour(e.formation).some(x=>x.matricule===mat)))).slice(0,4);
+  const prochains = evenements().filter(e=>e.date>=today() && e.statut!=="Annulée" && ((e.type==="tutorat" && specsDe(e).some(sp=>memeSpec(s.specialite, sp)) && e.niveau===s.niveau) || (e.type==="academie" && s.academie && apprenantsPour(e.formation).some(x=>x.matricule===mat)))).slice(0,4);
   return `<div class="card"><h3>Suivi pédagogique</h3>
     <div class="kpis">${kpi(`${p.pres}/${p.total}`,"séances Académie suivies","g")}${kpi(pct(p.assiduite),"assiduité Académie")}${kpi(`${p.tut.pres}/${p.tut.total}`,"séances de tutorat suivies")}${kpi(p.moyenneGenerale==null?"—":n20(p.moyenneGenerale),"moyenne générale /20")}${kpi(`${valides}/${forms.length}`,"formations validées")}</div>
     ${forms.length ? forms.map(([code,f])=>{ const evs = evalsDe(toutesFormations().find(x=>x.code===code)), PE = ND(code);
@@ -4192,6 +4238,8 @@ function abonnerProgramme(){
   sub("programme","programme", s => { S.programme = rows(s); });
   if (has("tuteurs","accompagnement","secretaire","formation")) sub("pointages_tutorat","pointagesTut", s => { S.pointagesTut = rows(s); });
   else if (tousMesRoles().includes("tuteur")) sub("pointages_tutorat","pointagesTut", s => { S.pointagesTut = rows(s); }, db.collection("pointages_tutorat").where("tuteurs","array-contains",S.email));
+  if (has("secretaire","accompagnement")) sub("pointages_communaute","pointagesCom", s => { S.pointagesCom = rows(s); });
+  else sub("pointages_communaute","pointagesCom", s => { S.pointagesCom = rows(s); }, db.collection("pointages_communaute").where("intervenants","array-contains",S.email));
 }
 
 function sub(path, key, fn, q){
