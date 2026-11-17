@@ -937,7 +937,7 @@ function vTshirts(){
   if (f.st) L = L.filter(x=>x.st===f.st);
   const q = normNom(f.q); if (q) L = L.filter(x=>normNom(x.s.matricule+" "+x.s.nom).includes(q));
   const gere = can("enc.saisir") || role()==="tresorerie" || presidence();
-  return `<div class="spread"><div><h2>T-shirts · tailles et commande</h2><p class="small muted">Chaque étudiant qui a payé son T-shirt choisit sa taille dans son espace CVPB Académie. Ici, vous préparez la commande et suivez la remise.</p></div><div class="row"><button class="btn" id="tsExp">Exporter (CSV)</button>${gere && aCommander.length?`<button class="btn primary" id="tsCmd">Marquer ${aCommander.length} T-shirt(s) commandé(s)</button>`:""}</div></div>
+  return `<div class="spread"><div><h2>T-shirts · tailles et commande</h2><p class="small muted">Chaque étudiant qui a payé son T-shirt choisit sa taille dans son espace CVPB Académie. Ici, vous préparez la commande et suivez la remise.</p></div><div class="row">${gere?`<button class="btn" id="tsImp">Importer les tailles du formulaire</button>`:""}<button class="btn" id="tsExp">Exporter (CSV)</button>${gere && aCommander.length?`<button class="btn primary" id="tsCmd">Marquer ${aCommander.length} T-shirt(s) commandé(s)</button>`:""}</div></div>
   <div class="kpis">${kpi(payes.length,"T-shirts payés")}${kpi(K("Choisie"),"tailles choisies (à commander)","g")}${kpi(K("Non choisie"),"sans taille")}${kpi(K("Commandé"),"commandés")}${kpi(K("Remis"),"remis")}</div>
   <div class="card"><h3>Bon de commande (tailles choisies, pas encore commandées)</h3>
     <div class="tablewrap"><table><thead><tr>${parTaille.map(([t])=>`<th class="r">${t}</th>`).join("")}<th class="r">Total</th></tr></thead><tbody><tr>${parTaille.map(([,n])=>`<td class="r"><b>${n}</b></td>`).join("")}<td class="r"><b>${aCommander.length}</b></td></tr></tbody></table></div>
@@ -950,6 +950,67 @@ function vTshirts(){
     <td class="keep">${gere && st==="Commandé"?`<button class="btn sm vert" data-tsr="${esc(s.matricule)}">Remis</button>`:""}${gere && st==="Remis"?`<span class="small muted">${t.remisLe?dFR(t.remisLe.slice(0,10)):""}</span>`:""}</td></tr>`).join("") || `<tr><td colspan="7"><div class="empty">Aucun étudiant.</div></td></tr>`}
   </tbody></table></div>
   <p class="small muted">Après « commandé », l'étudiant ne peut plus changer sa taille ; l'équipe peut encore la corriger ici.</p>`;
+}
+/* Import des tailles depuis le formulaire d'inscription (Google Forms → Fichier › Télécharger › CSV).
+   Rapprochement avec la liste des étudiants : 1) e-mail UVCI (dossiers CVPB Académie), 2) téléphone, 3) nom et prénoms.
+   Rien n'est enregistré avant la vérification ; une taille déjà choisie par l'étudiant ou une commande passée n'est pas écrasée. */
+function lireCSV(txt){
+  txt = txt.replace(/^\uFEFF/, ""); const sep = (txt.split("\n")[0].match(/;/g)||[]).length > (txt.split("\n")[0].match(/,/g)||[]).length ? ";" : ",";
+  const L = []; let row = [], cur = "", q = false;
+  for (let i = 0; i < txt.length; i++){ const c = txt[i];
+    if (q){ if (c === '"'){ if (txt[i+1] === '"'){ cur += '"'; i++; } else q = false; } else cur += c; }
+    else if (c === '"') q = true; else if (c === sep){ row.push(cur); cur = ""; } else if (c === "\n" || c === "\r"){ if (c === "\r" && txt[i+1] === "\n") i++; row.push(cur); cur = ""; if (row.some(x=>x.trim())) L.push(row); row = []; } else cur += c; }
+  row.push(cur); if (row.some(x=>x.trim())) L.push(row); return L;
+}
+const tailleNorm = v => { const t = String(v||"").toUpperCase().replace(/\s+/g,""); return ({"XXXL":"3XL","2XL":"XXL","XXL":"XXL","3XL":"3XL"})[t] || (TAILLES_TS.includes(t) ? t : ""); };
+async function importTailles(){
+  openSheet(`<h2>Importer les tailles du formulaire</h2><p class="small">Dans Google Sheets (réponses du formulaire) : <b>Fichier › Télécharger › Valeurs séparées par des virgules (.csv)</b>, puis choisissez ce fichier. Rien n'est enregistré avant votre vérification.</p>
+    <label class="f" for="ti_f">Fichier CSV des réponses<input type="file" id="ti_f" accept=".csv,text/csv,text/plain"></label><div id="ti_r"></div>`);
+  let acaMail = {};
+  try { const sn = await S.db.collection("aca_apprenants").get(); sn.docs.forEach(d => { const x = d.data(); if (x.matricule) acaMail[d.id.toLowerCase()] = x.matricule; }); } catch(e){ /* dossiers Académie non lisibles : rapprochement par téléphone et nom */ }
+  $("#ti_f").onchange = async () => {
+    const f = $("#ti_f").files[0]; if (!f) return;
+    const L = lireCSV(await f.text()); if (L.length < 2) return toast("Fichier vide ou illisible.");
+    const H = L[0].map(h=>normNom(h));
+    const col = (...k) => H.findIndex(h => k.every(x => h.includes(x)));
+    const cT = col("taille"), cN = col("nom"), cTel = H.map((h,i)=>h.includes("telephone")?i:-1).filter(i=>i>=0), cM = H.map((h,i)=>h.includes("mail")?i:-1).filter(i=>i>=0);
+    if (cT < 0 || cN < 0) return toast("Colonnes « Taille du tee-shirt » ou « Nom et prénoms » introuvables.");
+    const parTel = {}; Object.entries(S.prive||{}).forEach(([m,p]) => { const d = String(p?.tel||"").replace(/\D/g,""); if (d.length >= 8) parTel[d.slice(-8)] = m; });
+    const tok = n => normNom(n).split(" ").filter(w=>w.length>1);
+    const actifs = S.etudiants.filter(x=>x.statut!=="Inactif");
+    const parNom = n => { const a = new Set(tok(n)); if (!a.size) return null; let best = null, bs = 0, ex = false;
+      for (const x of actifs){ const b = tok(x.nom), c = b.filter(w=>a.has(w)).length; const sc = c >= 2 || (c >= 1 && b.length === 1) || (c === a.size && c >= 1) ? c : 0; if (sc > bs){ bs = sc; best = x; ex = false; } else if (sc && sc === bs) ex = true; }
+      return best && !ex ? best.matricule : null; };
+    const T = {}; S.tshirts.forEach(t=>T[t.matricule||t.id] = t);
+    const lignes = L.slice(1).map(r => { const nom = (r[cN]||"").trim(), taille = tailleNorm(r[cT]);
+      let mat = null, how = "";
+      for (const i of cM){ const m = acaMail[String(r[i]||"").trim().toLowerCase()]; if (m){ mat = m; how = "e-mail"; break; } }
+      if (!mat) for (const i of cTel){ const d = String(r[i]||"").replace(/\D/g,""); if (d.length >= 8 && parTel[d.slice(-8)]){ mat = parTel[d.slice(-8)]; how = "téléphone"; break; } }
+      if (!mat){ mat = parNom(nom); if (mat) how = "nom"; }
+      return {nom, taille, brut:r[cT]||"", mat, how}; }).filter(x=>x.nom || x.taille);
+    const vus = {}; lignes.forEach(x => { if (x.mat) (vus[x.mat] ||= []).push(x); });
+    const etat = x => !x.taille ? ["Taille illisible","bad"] : !x.mat ? ["Non trouvé : choisissez","warn"] : vus[x.mat].length > 1 ? ["Doublon","warn"] : T[x.mat] && ["Commandé","Remis"].includes(T[x.mat].statut) ? [`Déjà ${T[x.mat].statut.toLowerCase()}`,"mute"] : T[x.mat]?.taille && !T[x.mat]?.parGestion ? [`Taille choisie par l'étudiant : ${T[x.mat].taille}`,"mute"] : ["À importer","ok"];
+    const ops = s => s.map(x=>`<option value="${esc(x.matricule)}">${esc(x.nom)} · ${esc(x.matricule)}</option>`).join("");
+    const listeOpts = ops(actifs.slice().sort((a,b)=>a.nom.localeCompare(b.nom,"fr")));
+    $("#ti_r").innerHTML = `<p class="small"><b>${lignes.length}</b> réponse(s) · <b>${lignes.filter(x=>x.mat).length}</b> rapprochée(s) automatiquement. Vérifiez chaque ligne ; corrigez l'étudiant si besoin.</p>
+      <div class="tablewrap"><table><thead><tr><th>Formulaire</th><th>Taille</th><th>Étudiant CVPB Manager</th><th>Trouvé par</th><th>État</th></tr></thead><tbody>
+      ${lignes.map((x,i)=>{ const [lib,cl] = etat(x); return `<tr><td>${esc(x.nom)}</td><td><b>${esc(x.taille||x.brut||"—")}</b></td><td><select data-ti="${i}" style="min-height:32px;max-width:260px"><option value="">— Ne pas importer —</option>${listeOpts}</select></td><td class="small">${esc(x.how||"—")}</td><td><span class="pill ${cl}">${esc(lib)}</span>${x.mat && !tshirtPaye(x.mat)?' <span class="pill bad">T-shirt non payé (registre)</span>':""}</td></tr>`; }).join("")}
+      </tbody></table></div>
+      <div class="row"><button class="btn vert" id="ti_ok">Enregistrer les tailles</button><button class="btn ghost" data-close>Fermer</button></div>`;
+    lignes.forEach((x,i) => { const sel = $(`[data-ti="${i}"]`); if (x.mat) sel.value = x.mat; });
+    $("#ti_ok").onclick = async () => {
+      const choix = lignes.map((x,i)=>({...x, mat: $(`[data-ti="${i}"]`).value})).filter(x=>x.mat && x.taille);
+      const dbl = Object.entries(choix.reduce((a,x)=>(a[x.mat]=(a[x.mat]||0)+1,a),{})).filter(([,n])=>n>1);
+      if (dbl.length) return toast(`Un même étudiant est choisi sur plusieurs lignes : ${dbl.map(([m])=>etuBy(m)?.nom||m).join(", ")}.`);
+      const le = nowISO(), par = compte().nom;
+      const aEcrire = choix.filter(x => !(T[x.mat] && (["Commandé","Remis"].includes(T[x.mat].statut) || (T[x.mat].taille && !T[x.mat].parGestion))));
+      if (!aEcrire.length) return toast("Aucune taille à enregistrer.");
+      try { await S.db.lots(aEcrire.map(x => ({path:"tshirts/"+x.mat, data:{matricule:x.mat, nom:etuBy(x.mat)?.nom||x.nom, taille:x.taille, statut:"Choisie", choisiLe:le, parGestion:true, source:"Formulaire d'inscription", majLe:le, majPar:par}})));
+        log("encaissement", `Import de ${aEcrire.length} taille(s) de T-shirt depuis le formulaire d'inscription`, ["president","tresorerie","encaissement"]);
+        toast(`${aEcrire.length} taille(s) enregistrée(s)${choix.length>aEcrire.length?` · ${choix.length-aEcrire.length} ignorée(s) (déjà choisie ou commandée)`:""}`); closeSheet(); }
+      catch(e){ console.warn(e); toast("Échec de l'enregistrement : vérifiez la connexion et les règles Firebase."); }
+    };
+  };
 }
 async function majTshirt(mat, data, msg){
   const s = etuBy(mat) || {}, ex = S.tshirts.find(t=>(t.matricule||t.id)===mat);
@@ -1662,6 +1723,7 @@ function bind(v){
       try { await S.db.lots(L.map(t=>{ const data = {...t, statut:"Commandé", commandeLe:le, commandePar:par, majLe:le, majPar:par}; delete data.id; return {path:"tshirts/"+(t.matricule||t.id), data}; }));
         log("encaissement", `Commande de ${L.length} T-shirt(s) · ${rec}`, ["president","tresorerie","encaissement"]); toast(`${L.length} T-shirt(s) marqués commandés`); }
       catch(e){ console.warn(e); toast("Échec : vérifiez la connexion et les règles Firebase."); } });
+    on("#tsImp","onclick",importTailles);
     on("#tsExp","onclick",()=>{ const T = {}; S.tshirts.forEach(t=>T[t.matricule||t.id]=t);
       const mats = [...new Set([...S.etudiants.filter(s=>s.statut!=="Inactif" && tshirtPaye(s.matricule)).map(s=>s.matricule), ...Object.keys(T)])];
       exportCSV("CVPB_tshirts", ["Matricule","Nom","Niveau","Spécialité","T-shirt payé","Taille","Statut","Choisie le","Commandé le","Remis le"], mats.map(m=>{ const s = etuBy(m)||{}, t = T[m]||{}; return [m, s.nom||t.nom||"", s.niveau||"", s.specialite||"", tshirtPaye(m)?"Oui":"Non", t.taille||"", t.statut||(t.taille?"Choisie":"Non choisie"), (t.choisiLe||"").slice(0,10), (t.commandeLe||"").slice(0,10), (t.remisLe||"").slice(0,10)]; })); });

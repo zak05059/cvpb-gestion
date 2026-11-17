@@ -1,5 +1,5 @@
 /* Service worker CVPB Manager : fonctionne hors ligne et affiche les notifications. */
-const VERSION = "cvpb-v22";
+const VERSION = "cvpb-v23";
 const COQUILLE = ["./", "index.html", "app.js", "fb.js", "firebase-config.js", "manifest.webmanifest",
   "icon-192.png", "icon-512.png", "maskable-192.png", "maskable-512.png", "apple-touch-icon.png", "favicon.png", "badge-96.png"];
 
