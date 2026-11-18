@@ -284,7 +284,7 @@ function confirmBtn(btn, label, fn){ btn.onclick = () => { if (btn.dataset.sure!
 /* ======== État ======== */
 const S = {
   db:null, fb:null, uid:null, email:null, moi:null, sansConfig:false, authPret:false, stale:false, jx:[], rapportsEquipe:[], demandesCours:[], rapportsDelegues:[], notesTuteurs:[], decisions:[], taches:[], reunions:[], audit:[],
-  etudiants:[], prive:{}, encaissements:[], depots:[], operations:[], seances:[], notes:[], programme:[], pointagesTut:[], pointagesCom:[], tshirts:[], params:null, comptes:{}, demandes:{}, journal:[], journalPub:[], journalFin:[], tut:[], T:null, etat:{}, tf:{tuteur:"", statut:"", spec:""},
+  etudiants:[], prive:{}, encaissements:[], depots:[], operations:[], seances:[], notes:[], programme:[], pointagesTut:[], pointagesCom:[], tshirts:[], aides:[], comp:[], params:null, comptes:{}, demandes:{}, journal:[], journalPub:[], journalFin:[], tut:[], T:null, etat:{}, tf:{tuteur:"", statut:"", spec:""},
   loaded:{}, C:null, pf:{types:["academie","tutorat","communaute","reunion"], vue:"semaine", ref:"", miens:false}, sub:{equipe:"", delegues:"demandes", caisse:"synthese", pedagogie:"seances", admin:"comptes", etudiants:""},
   f:{q:"", niveau:"", situation:"", spec:""}, rf:{q:"", nature:"", mois:"", statut:"valides"},
   firstJournal:true,
@@ -369,6 +369,7 @@ const VIEWS = [
   {id:"rapports", l:"Rapports PDF", ok:()=>can("fin.voir")||can("tut.voir")},
   {id:"evaluations", l:"Évaluations", ok:()=>presidence()||LECTURE_TOTALE.includes(role())},
   {id:"classement", l:"Classement", ok:()=>!presidence()&&!LECTURE_TOTALE.includes(role())},
+  {id:"aides", l:"Demandes d'aide des étudiants", ok:()=>voitAides()},
   {id:"notifications", l:"Alertes et notifications", ok:()=>true},
   {id:"audit", l:"Journal d'audit", ok:()=>gouvSup()},
   {id:"admin", l:"Administration", ok:R()},
@@ -439,7 +440,7 @@ function rendu(){
   navigation(VIEWS.filter(x=>x.ok()).map(x=>({id:x.id, l:x.id==="consignes"&&!lectureTotale()?"Mes consignes":lab(x), n:nb(x)})), v, principauxDe(role()));
   majBadge();
   if (v==="depots") S.sub.caisse = "depots";
-  main.innerHTML = (v==="accueil" ? heroAccueil() + anneaux() + (lectureTotale() ? blocActivite() : "") + blocGouv() + blocConsignes() : "") + (v==="accueil" ? blocProgramme() + blocEquipe() : "") + ({programme:vProgramme, equipe:vEquipe, delegues:vDelegues, taches:vTaches, decisions:vDecisions, reunions:vReunions, organigramme:vOrganigramme, audit:vAudit, suivi:vSuivi, synthese:vSynthese, catalogue:vCatalogue, messages:vMessages, consignes:vConsignes, rapports:vRapports, evaluations:vEvaluations, classement:vClassement, accueil:vAccueil, etudiants:vEtudiants, registre:vRegistre, cotisations:vCotisations, tshirts:vTshirts, caisse:vCaisse, depots:vCaisse, pedagogie:vPedagogie, tutorat:vTutorat, notifications:vNotifs, admin:vAdmin, compte:vCompte}[v])();
+  main.innerHTML = (v==="accueil" ? heroAccueil() + anneaux() + (lectureTotale() ? blocActivite() : "") + blocGouv() + blocConsignes() : "") + (v==="accueil" ? blocProgramme() + blocEquipe() : "") + ({programme:vProgramme, equipe:vEquipe, delegues:vDelegues, taches:vTaches, decisions:vDecisions, reunions:vReunions, organigramme:vOrganigramme, audit:vAudit, suivi:vSuivi, synthese:vSynthese, catalogue:vCatalogue, messages:vMessages, consignes:vConsignes, rapports:vRapports, evaluations:vEvaluations, classement:vClassement, accueil:vAccueil, etudiants:vEtudiants, registre:vRegistre, cotisations:vCotisations, tshirts:vTshirts, aides:vAides, caisse:vCaisse, depots:vCaisse, pedagogie:vPedagogie, tutorat:vTutorat, notifications:vNotifs, admin:vAdmin, compte:vCompte}[v])();
   bind(v==="depots" ? "caisse" : v);
   if (v==="compte") bindCompte();
   if (v==="notifications") marquerLu();
@@ -1017,6 +1018,53 @@ async function majTshirt(mat, data, msg){
   const d = {matricule:mat, nom:s.nom||ex?.nom||"", ...(ex||{}), ...data, majLe:nowISO(), majPar:compte().nom}; delete d.id;
   return write(()=>S.db.doc("tshirts/"+mat).set(d), msg);
 }
+/* ---- Demandes d'aide et compréhension des séances (saisies par les étudiants dans CVPB Académie) ----
+   Formateur : demandes qui lui sont adressées ou sur ses formations ; tuteur : demandes « tutorat » de sa spécialité et de son niveau ;
+   responsables (Formation, Tuteurs, Accompagnement, Secrétariat général) et Présidence : toutes. */
+const voitAides = () => presidence() || LECTURE_TOTALE.includes(role()) || tousMesRoles().some(r=>["pedagogie","tuteur","tuteurs","formation","accompagnement","secretaire"].includes(r));
+const peutRepondreAide = () => presidence() || tousMesRoles().some(r=>["pedagogie","tuteur","tuteurs","formation","accompagnement"].includes(r));
+function aidesVisibles(){
+  const R_ = tousMesRoles(), tout = presidence() || LECTURE_TOTALE.includes(role()) || R_.some(r=>["tuteurs","formation","accompagnement","secretaire"].includes(r));
+  if (tout) return S.aides;
+  const c = compte()||{}, mesCodes = new Set(mesFormations().map(f=>f.code)), me = String(S.email||"").toLowerCase();
+  return S.aides.filter(x => (x.destinataires||[]).includes(me)
+    || (R_.includes("pedagogie") && x.type==="formation" && mesCodes.has(x.formationCode))
+    || (R_.includes("tuteur") && x.type==="tutorat" && (!c.niveau || x.niveau===c.niveau) && (!c.specialite || memeSpec(x.specialite || x.specCode, c.specialite) || codeSp(c.specialite).includes(x.specCode||"§"))));
+}
+function vAides(){
+  const sub = S.sub.aides || "demandes";
+  const tabs = `<div class="subtabs" role="group" aria-label="Aide">${[["demandes","Demandes d'aide"],["comp","Compréhension des séances"]].map(([k,l])=>`<button data-sub="${k}" aria-pressed="${sub===k}">${l}</button>`).join("")}</div>`;
+  if (sub==="comp"){
+    const par = {}; for (const c of S.comp) (par[c.seanceId] ||= []).push(c);
+    const lib = sid => { if (sid.startsWith("mgr_")){ const se = S.seances.find(x=>"mgr_"+x.id===sid); return se ? {ok:true, d:se.date, t:`${se.formation} · ${nomForm(se.formation)}`} : null; }
+      if (sid.startsWith("pt_tutorat_")){ const pt = S.pointagesTut.find(x=>"pt_tutorat_"+x.id===sid); return pt ? {ok:true, d:pt.date, t:`Tutorat · ${pt.titre||pt.specialite||""}`} : null; }
+      if (sid.startsWith("pt_communaute_")){ const pt = (S.pointagesCom||[]).find(x=>"pt_communaute_"+x.id===sid); return pt ? {ok:true, d:pt.date, t:`Activité · ${pt.titre||""}`} : null; }
+      return null; };
+    const tout = presidence() || LECTURE_TOTALE.includes(role()) || tousMesRoles().some(r=>["tuteurs","formation","accompagnement","secretaire"].includes(r));
+    const L = Object.entries(par).map(([sid, r]) => { const l = lib(sid) || (tout ? {d:r[0].date, t:r[0].formationTitre||"Séance CVPB Académie"} : null); return l && {sid, r, ...l}; }).filter(Boolean).sort((a,b)=>String(b.d).localeCompare(String(a.d)));
+    return `<h2>Compréhension des séances</h2>${tabs}<p class="small muted">Chaque étudiant présent note sa compréhension de 0 (rien compris) à 10 (tout compris) dans CVPB Académie. Une moyenne sous 5/10 appelle une reprise ou une séance d'explication.</p>
+    <div class="tablewrap"><table><thead><tr><th>Date</th><th>Séance</th><th class="r">Réponses</th><th class="r">Moyenne /10</th><th class="r">Sous 5</th><th>Étudiants en difficulté</th></tr></thead><tbody>
+    ${L.map(x=>{ const m = x.r.reduce((a,c)=>a+(+c.note||0),0)/x.r.length, bas = x.r.filter(c=>c.note<5); return `<tr><td>${dFR(x.d)}</td><td>${esc(x.t)}</td><td class="r">${x.r.length}</td><td class="r"><span class="pill ${m>=8?"ok":m>=5?"warn":"bad"}">${String(Math.round(m*10)/10).replace(".",",")}</span></td><td class="r">${bas.length}</td><td class="small">${bas.map(c=>esc((S.etudiants.find(s=>s.matricule===c.matricule)||{}).nom||c.matricule)+" ("+c.note+")").join(", ")||"—"}</td></tr>`; }).join("") || `<tr><td colspan="6"><div class="empty">Aucune réponse pour vos séances.</div></td></tr>`}
+    </tbody></table></div>`;
+  }
+  const L = aidesVisibles().slice().sort((a,b)=>(a.statut==="Résolue")-(b.statut==="Résolue") || String(b.creeLe).localeCompare(String(a.creeLe)));
+  return `<h2>Demandes d'aide des étudiants</h2>${tabs}<p class="small muted">Les étudiants demandent de l'aide depuis CVPB Académie à leur formateur (formation) ou aux tuteurs de leur spécialité (tutorat). Votre réponse leur est notifiée dans CVPB Académie.</p>
+  ${L.map(x=>`<div class="card"><div class="spread"><div><b>${esc(x.sujet)}</b><br><span class="small muted">${esc(x.nom)} · ${esc(x.matricule)} · ${x.type==="tutorat"?`Tutorat ${esc(x.specCode||"")} ${esc(x.niveau||"")}`:esc(x.formationCode||x.formationTitre||"")} · ${x.creeLe?new Date(x.creeLe).toLocaleString("fr-FR"):""}</span></div><span class="pill ${x.statut==="Résolue"?"ok":x.statut==="Prise en charge"?"info":"warn"}">${esc(x.statut||"Nouvelle")}</span></div>
+    <div class="quote" style="white-space:pre-line">${esc(x.message)}</div>
+    ${(x.reponses||[]).map(r=>`<div class="banner" style="border-color:var(--line)"><b>${esc(r.parNom)}</b> · <span class="small">${new Date(r.le).toLocaleString("fr-FR")}</span><div style="white-space:pre-line">${esc(r.texte)}</div></div>`).join("")}
+    ${x.statut!=="Résolue" && peutRepondreAide()?`<div class="row"><button class="btn sm primary" data-aide="${esc(x.id)}">Répondre</button></div>`:""}</div>`).join("") || `<div class="empty">Aucune demande d'aide pour le moment.</div>`}`;
+}
+function repondreAide(id){
+  const x = S.aides.find(a=>a.id===id); if (!x) return;
+  openSheet(`<h2>Répondre à ${esc(x.nom)}</h2><p class="small muted">${esc(x.sujet)}</p><div class="quote" style="white-space:pre-line">${esc(x.message)}</div>
+    <label class="f" for="ah_t">Votre réponse<textarea id="ah_t" maxlength="2000" placeholder="Explication, ressource, ou proposition de séance (date, heure, lieu ou lien Meet)…"></textarea></label>
+    <label class="f" for="ah_s">Statut<select id="ah_s">${opts(["Prise en charge","Résolue"], "Prise en charge")}</select></label>
+    <div class="row"><button class="btn primary" id="ah_ok">Envoyer la réponse</button><button class="btn ghost" data-close>Annuler</button></div>`);
+  $("#ah_ok").onclick = async () => { const t = $("#ah_t").value.trim(); if (t.length<3) return toast("Écrivez votre réponse.");
+    const reps = [...(x.reponses||[]), {par:S.email, parNom:compte().nom, le:nowISO(), texte:t}];
+    if (await write(()=>S.db.doc("demandes_aide/"+id).update({reponses:reps, statut:$("#ah_s").value, majLe:nowISO(), prisPar:S.email, prisParNom:compte().nom}), "Réponse envoyée : l'étudiant est notifié dans CVPB Académie")){
+      log("suivi", `Réponse à la demande d'aide de ${x.nom} (${x.sujet})`, ["formation"]); closeSheet(); } };
+}
 /* Requalification (Présidence) : « Vente de T-shirt (hors inscription) » → « Inscription (T-shirt inclus) ».
    Le montant, la date et la référence ne changent pas ; l'ancienne nature, l'auteur, la date et le motif sont conservés sur l'écriture. */
 function requalifierTshirts(){
@@ -1372,13 +1420,14 @@ function ficheRapport(doc, id){
 }
 
 /* ---- Espace Tuteurs ---- */
-const TVIEWS = [{id:"t-accueil", l:"Mon tableau de bord"},{id:"t-programme", l:"Programme"},{id:"t-hebdo", l:"Rapport de la semaine"},{id:"t-rapports", l:"Mes rapports"},{id:"t-etudiants", l:"Mes étudiants"},{id:"t-consignes", l:"Consignes"},{id:"t-delegues", l:"Délégués de mon groupe"},{id:"t-taches", l:"Tâches"},{id:"t-reunions", l:"Réunions"},{id:"t-organigramme", l:"Organigramme"},{id:"t-classement", l:"Classement"},{id:"t-notifs", l:"Notifications"},{id:"t-compte", l:"Mon compte"}];
+const TVIEWS = [{id:"t-accueil", l:"Mon tableau de bord"},{id:"t-programme", l:"Programme"},{id:"t-aides", l:"Demandes d'aide"},{id:"t-hebdo", l:"Rapport de la semaine"},{id:"t-rapports", l:"Mes rapports"},{id:"t-etudiants", l:"Mes étudiants"},{id:"t-consignes", l:"Consignes"},{id:"t-delegues", l:"Délégués de mon groupe"},{id:"t-taches", l:"Tâches"},{id:"t-reunions", l:"Réunions"},{id:"t-organigramme", l:"Organigramme"},{id:"t-classement", l:"Classement"},{id:"t-notifs", l:"Notifications"},{id:"t-compte", l:"Mon compte"}];
 function tview(){ const h = location.hash.slice(1); return TVIEWS.some(v=>v.id===h) ? h : "t-accueil"; }
 const mesRapports = () => S.T.rapports.filter(r=>r.doc===S.uid);
 function renderTuteur(main){
   const v = tview();
-  navigation(TVIEWS.map(x=>({id:x.id, l:x.l, n:x.id==="t-delegues"?S.rapportsDelegues.filter(r=>r.statut==="Soumis" && mesVisas(r).some(k=>!r.visas?.[k])).length:x.id==="t-notifs"?nonLues().length:x.id==="t-consignes"?consignesNonLues():0})), v, principauxDe("tuteur"));
+  navigation(TVIEWS.map(x=>({id:x.id, l:x.l, n:x.id==="t-delegues"?S.rapportsDelegues.filter(r=>r.statut==="Soumis" && mesVisas(r).some(k=>!r.visas?.[k])).length:x.id==="t-notifs"?nonLues().length:x.id==="t-consignes"?consignesNonLues():x.id==="t-aides"?aidesVisibles().filter(a=>a.statut==="Nouvelle").length:0})), v, principauxDe("tuteur"));
   if (v==="t-programme"){ main.innerHTML = vProgramme(); bindProgramme(); return; }
+  if (v==="t-aides"){ main.innerHTML = vAides(); main.querySelectorAll("[data-sub]").forEach(b=>b.onclick=()=>{ S.sub.aides = b.dataset.sub; render(); }); main.querySelectorAll("[data-aide]").forEach(b=>b.onclick=()=>repondreAide(b.dataset.aide)); return; }
   if (v==="t-consignes"){ main.innerHTML = vConsignes(); bindConsignes(); return; }
   if (v==="t-delegues"){ main.innerHTML = vDelegues(); bindDelegues(); return; }
   if (v==="t-taches"){ main.innerHTML = vTaches(); bindTaches(); return; }
@@ -1570,11 +1619,85 @@ function vAdmin(){
       <div class="row"><button class="btn primary" type="submit">Enregistrer les paramètres</button></div>
     </form>`;
   }
+  if (sub==="donnees") body = blocEditeur();
   if (sub==="journal"){
     body = `<div class="card"><div class="spread"><h3>Journal des actions</h3>${can("export")?`<button class="btn" id="expJ">Exporter (CSV)</button>`:""}</div><div class="tablewrap"><table><thead><tr><th>Date</th><th>Par</th><th>Rôle</th><th>Action</th></tr></thead><tbody>${S.journal.map(j=>`<tr><td class="small">${new Date(j.le).toLocaleString("fr-FR")}</td><td>${esc(j.parNom)}</td><td class="small">${esc(ROLES[j.role]?.l||"")}</td><td style="white-space:normal">${esc(j.texte)}</td></tr>`).join("")||`<tr><td colspan="4"><div class="empty">Aucune action enregistrée.</div></td></tr>`}</tbody></table></div><p class="small muted">Les 200 dernières actions. Chaque saisie, validation, annulation et changement de droits est tracé.</p></div>`;
   }
-  return `<h2>Administration</h2><div class="subtabs" role="group" aria-label="Administration">${[["comptes","Comptes et accès"],["parametres","Paramètres"],["journal","Journal"],["import","Import des données"]].map(([k,l])=>`<button data-sub="${k}" aria-pressed="${sub===k}">${l}</button>`).join("")}</div>${body}`;
+  return `<h2>Administration</h2><div class="subtabs" role="group" aria-label="Administration">${[["comptes","Comptes et accès"],["parametres","Paramètres"],["journal","Journal"],["import","Import des données"], ...(estSuper()?[["donnees","Éditeur de données"]]:[])].map(([k,l])=>`<button data-sub="${k}" aria-pressed="${sub===k}">${l}</button>`).join("")}</div>${body}`;
 }
+/* ===== Éditeur de données : Présidence uniquement =====
+   Modifie, crée ou supprime n'importe quel document des deux applications (même base Firebase).
+   Chaque modification est tracée dans le journal (avant / après). Le serveur (règles Firestore, emailPresident)
+   n'autorise ces écritures qu'au compte de la Présidence : l'écran n'apparaît qu'au rôle Président. */
+const estSuper = () => role()==="president";
+const COLLECTIONS_TOUTES = [
+  ["CVPB Manager", ["etudiants","prive","encaissements","depots","operations","tshirts","formations","seances","notes","notes_eleves","programme","pointages_tutorat","pointages_communaute","affectations","rapports_tuteurs","rapports_delegues","rapports_equipe","rapports_hebdo","rapports_resp","demandes_cours","demandes_aide","notes_tuteurs","consignes","decisions","taches","reunions","evaluations","classement","syntheses","messages","dossiers","etat","users","parametres","audit"]],
+  ["CVPB Académie", ["aca_apprenants","aca_formations","aca_seances","aca_presences","aca_exercices","aca_notes","aca_quiz","aca_quiz_cles","aca_reponses","aca_comprehension","aca_sanctions","aca_activites","aca_annonces","aca_infos","aca_validations","aca_notifications","aca_settings"]]
+];
+const edType = v => v === null ? "null" : Array.isArray(v) || typeof v === "object" ? "json" : typeof v === "number" ? "nombre" : typeof v === "boolean" ? "booleen" : "texte";
+const edResume = d => Object.entries(d).filter(([k])=>k!=="id").slice(0,4).map(([k,v])=>`${k} : ${typeof v === "object" ? (Array.isArray(v) ? `[${v.length}]` : "{…}") : String(v).slice(0,40)}`).join(" · ");
+function blocEditeur(){
+  if (!estSuper()) return `<div class="empty">Réservé au compte de la Présidence.</div>`;
+  const E = (S.ed ||= {col:"etudiants", q:"", docs:null, err:""});
+  let L = E.docs || []; const q = normNom(E.q); if (q) L = L.filter(d => normNom(d.id + " " + JSON.stringify(d)).includes(q));
+  return `<div class="banner"><b>Éditeur de données (Présidence uniquement).</b> Vous pouvez modifier, créer ou supprimer n'importe quelle donnée de CVPB Manager et de CVPB Académie. Chaque modification est enregistrée dans le journal avec l'ancienne et la nouvelle valeur. Les numéros (ENC-…, matricules) et les liens entre documents ne sont pas recalculés : modifiez avec prudence.</div>
+  <div class="filters"><select id="edCol" aria-label="Collection">${COLLECTIONS_TOUTES.map(([g,L])=>`<optgroup label="${g}">${L.map(c=>`<option ${c===E.col?"selected":""}>${c}</option>`).join("")}</optgroup>`).join("")}</select>
+    <button class="btn" id="edLoad">${E.docs?"Recharger":"Afficher"}</button><input type="search" id="edQ" placeholder="Rechercher (id ou contenu)" value="${esc(E.q)}"><button class="btn primary" id="edNew">+ Nouveau document</button></div>
+  ${E.err?`<div class="banner">${esc(E.err)}</div>`:""}
+  ${E.docs ? `<p class="small muted">${E.docs.length} document(s)${q?` · ${L.length} affiché(s)`:""}</p><div class="tablewrap"><table><thead><tr><th>Identifiant</th><th>Contenu</th><th></th></tr></thead><tbody>
+    ${L.slice(0,300).map(d=>`<tr><td class="num">${esc(d.id)}</td><td class="small">${esc(edResume(d))}</td><td class="keep"><button class="btn sm" data-edo="${esc(d.id)}">Modifier</button></td></tr>`).join("") || `<tr><td colspan="3"><div class="empty">Aucun document.</div></td></tr>`}
+    </tbody></table></div>${L.length>300?`<p class="small muted">300 premiers affichés : affinez la recherche.</p>`:""}` : `<p class="small muted">Choisissez une collection puis « Afficher ».</p>`}`;
+}
+async function edCharger(){
+  const E = S.ed; E.err = "";
+  try { const sn = await S.db.collection(E.col).get(); E.docs = sn.docs.map(d=>({id:d.id, ...d.data()})).sort((a,b)=>String(a.id).localeCompare(String(b.id))); }
+  catch(e){ E.docs = []; E.err = "Lecture impossible : publiez les règles Firebase v23 (accès total de la Présidence)."; }
+  render();
+}
+function edOuvrir(id){
+  const E = S.ed, isNew = id == null, d0 = isNew ? {} : {...(E.docs.find(x=>x.id===id)||{})}; delete d0.id;
+  const champ = (k, v, i) => { const t = edType(v);
+    return `<div class="edrow" data-i="${i}" style="display:grid;grid-template-columns:minmax(110px,180px) 110px 1fr auto;gap:6px;align-items:start;margin-bottom:6px">
+      <input type="text" class="edk" value="${esc(k)}" aria-label="Nom du champ" style="min-height:32px">
+      <select class="edt" aria-label="Type" style="min-height:32px">${[["texte","Texte"],["nombre","Nombre"],["booleen","Vrai/Faux"],["json","Liste / objet"],["null","Vide (null)"]].map(([a,b])=>`<option value="${a}" ${a===t?"selected":""}>${b}</option>`).join("")}</select>
+      ${t==="json" ? `<textarea class="edv" rows="3" style="font-family:monospace;font-size:12px">${esc(JSON.stringify(v, null, 1))}</textarea>` : t==="booleen" ? `<select class="edv"><option value="true" ${v?"selected":""}>Vrai</option><option value="false" ${!v?"selected":""}>Faux</option></select>` : `<input type="text" class="edv" value="${esc(v==null?"":String(v))}" style="min-height:32px">`}
+      <button type="button" class="btn sm ghost" data-edx aria-label="Retirer le champ">✕</button></div>`; };
+  openSheet(`<h2>${isNew?"Nouveau document":"Modifier"} · ${esc(E.col)}</h2>
+    <label class="f" for="edId">Identifiant du document<input type="text" id="edId" value="${esc(id||"")}" ${isNew?"":"readonly"} placeholder="${isNew?"Laisser vide = identifiant automatique":""}"></label>
+    <div id="edF">${Object.entries(d0).map(([k,v],i)=>champ(k,v,i)).join("")}</div>
+    <button type="button" class="btn sm" id="edAdd">+ Ajouter un champ</button>
+    <label class="f" for="edMot" style="margin-top:10px">Motif de la modification (journal)<input type="text" id="edMot" maxlength="200" placeholder="Ex. : correction de la taille, erreur de saisie…"></label>
+    <div class="row"><button class="btn primary" id="edSave">Enregistrer</button>${isNew?"":`<button class="btn danger" id="edDel">Supprimer le document</button>`}<button class="btn ghost" data-close>Fermer</button></div>`);
+  const lier = () => $("#edF").querySelectorAll("[data-edx]").forEach(b=>b.onclick=()=>b.closest(".edrow").remove());
+  lier();
+  $("#edF").addEventListener("change", e => { if (!e.target.classList.contains("edt")) return; const row = e.target.closest(".edrow"), t = e.target.value, old = row.querySelector(".edv");
+    const n = t==="json" ? Object.assign(document.createElement("textarea"), {className:"edv", rows:3, value:"[]"}) : t==="booleen" ? Object.assign(document.createElement("select"), {className:"edv", innerHTML:'<option value="true">Vrai</option><option value="false">Faux</option>'}) : Object.assign(document.createElement("input"), {className:"edv", type:"text", value: t==="null" ? "" : old.value});
+    old.replaceWith(n); });
+  $("#edAdd").onclick = () => { $("#edF").insertAdjacentHTML("beforeend", champ("", "", Date.now())); lier(); };
+  const lire = () => { const o = {}; for (const row of $("#edF").querySelectorAll(".edrow")){ const k = row.querySelector(".edk").value.trim(), t = row.querySelector(".edt").value, v = row.querySelector(".edv").value;
+      if (!k) continue; if (k in o) throw `Champ en double : ${k}`;
+      if (t==="nombre"){ const n = Number(String(v).replace(",", ".")); if (v==="" || isNaN(n)) throw `« ${k} » doit être un nombre.`; o[k] = n; }
+      else if (t==="booleen") o[k] = v==="true"; else if (t==="null") o[k] = null;
+      else if (t==="json"){ try { o[k] = JSON.parse(v); } catch(e){ throw `« ${k} » : liste/objet mal écrit (format JSON).`; } }
+      else o[k] = v; } return o; };
+  $("#edSave").onclick = async () => {
+    let o; try { o = lire(); } catch(m){ return toast(m); }
+    const nid = $("#edId").value.trim() || (E.col.slice(0,3).toUpperCase() + Date.now().toString(36));
+    if (/[\/]/.test(nid)) return toast("L'identifiant ne doit pas contenir « / ».");
+    if (isNew && (E.docs||[]).some(x=>x.id===nid)) return toast("Cet identifiant existe déjà.");
+    if (!confirm(`${isNew?"Créer":"Remplacer"} le document ${E.col}/${nid} ?`)) return;
+    if (await write(()=>S.db.doc(E.col+"/"+nid).set(o), "Données enregistrées")){
+      log("admin", `Éditeur de données · ${isNew?"création":"modification"} ${E.col}/${nid}${$("#edMot").value.trim()?` · ${$("#edMot").value.trim()}`:""}`, ["president"], {avant: isNew ? null : JSON.stringify(d0).slice(0,3000), apres: JSON.stringify(o).slice(0,3000)});
+      closeSheet(); edCharger(); }
+  };
+  $("#edDel") && ($("#edDel").onclick = async () => {
+    if (prompt(`Suppression définitive de ${E.col}/${id}.\nTapez SUPPRIMER pour confirmer.`) !== "SUPPRIMER") return;
+    if (await write(()=>S.db.doc(E.col+"/"+id).delete(), "Document supprimé")){
+      log("admin", `Éditeur de données · suppression ${E.col}/${id}${$("#edMot").value.trim()?` · ${$("#edMot").value.trim()}`:""}`, ["president"], {avant: JSON.stringify(d0).slice(0,3000)});
+      closeSheet(); edCharger(); }
+  });
+}
+
 function formCompte(uid, pre){
   const isNew = !uid, c = isNew ? {role:(pre?.fonctions?.[0] && roleDeFonction(pre.fonctions[0]) && roleDeFonction(pre.fonctions[0])!=="president") ? roleDeFonction(pre.fonctions[0]) : "membre", actif:true, nom:pre?.nom||"", fonctions:pre?.fonctions||[]} : S.comptes[uid];
   const F = (c.fonctions||[]).map(f=>({...f}));
@@ -1710,6 +1833,10 @@ function bind(v){
     on("#expTut","onclick",()=>exportCSV("CVPB_rapports_tutorat",["Date de l'activité","Tuteur","Spécialité","Niveau","Période","Types d'activité","Thème","Compte rendu","Attendus","Présents","Participation (1-5)","Observations","Difficultés","Nature des difficultés","Description","Intervention nécessaire","Situation à traiter","Actions entreprises","Actions prévues","Recommandations","Prochaine séance","Commentaire","Suivi","Réponse de la Commission"],
       S.T.rapports.map(r=>[String(r.dateActivite||"").replace("T"," "),r.tuteurNom,r.specialite,r.niveau,r.periode,(r.types||[]).join("; "),r.theme,r.compteRendu,r.attendus,r.presents,r.participation,r.obsParticipation,r.difficultes,(r.natures||[]).join("; "),r.descDifficultes,r.intervention,r.interventionDetail,r.actionsEntreprises,r.actionsPrevues,r.recommandations,String(r.prochaineSeance||"").replace("T"," "),r.commentaire,r.suivi?.statut||"Nouveau",r.suivi?.reponse||""])));
   }
+  if (v==="aides"){
+    main.querySelectorAll("[data-sub]").forEach(b=>b.onclick=()=>{ S.sub.aides = b.dataset.sub; render(); });
+    main.querySelectorAll("[data-aide]").forEach(b=>b.onclick=()=>repondreAide(b.dataset.aide));
+  }
   if (v==="tshirts"){
     on("#tsq","oninput",e=>{ S.tsf.q = e.target.value; clearTimeout(S.tsT); S.tsT = setTimeout(()=>{ render(); const i=$("#tsq"); if(i){ i.focus(); i.setSelectionRange(i.value.length,i.value.length); } },350); });
     on("#tsst","onchange",e=>{ S.tsf.st = e.target.value; render(); });
@@ -1738,6 +1865,11 @@ function bind(v){
     on("#notePub","onclick",e=>publierNotes(e.currentTarget.dataset.code).then(n=>toast(n?`${n} relevé(s) publié(s) dans CVPB Académie`:"Aucune note à publier.")).catch(()=>toast("Publication impossible : vérifiez la connexion et les règles Firebase.")));
   }
   if (v==="admin"){
+    on("#edCol","onchange",e=>{ S.ed.col = e.target.value; S.ed.docs = null; S.ed.q = ""; render(); });
+    on("#edLoad","onclick",edCharger);
+    on("#edQ","oninput",e=>{ S.ed.q = e.target.value; clearTimeout(S.edT); S.edT = setTimeout(()=>{ render(); const i=$("#edQ"); if(i){ i.focus(); i.setSelectionRange(i.value.length,i.value.length); } },350); });
+    on("#edNew","onclick",()=>edOuvrir(null));
+    main.querySelectorAll("[data-edo]").forEach(b=>b.onclick=()=>edOuvrir(b.dataset.edo));
     on("#newCpt","onclick",()=>formCompte());
     main.querySelectorAll("[data-cpt]").forEach(b=>b.onclick=()=>formCompte(b.dataset.cpt));
     main.querySelectorAll("[data-fiche-etu]").forEach(b=>b.onclick=()=>ficheEtu(b.dataset.ficheEtu));
@@ -2414,6 +2546,8 @@ function recurrents(){
 }
 function alertesSuivi(){
   const A = [], add = (niv, titre, detail, pour, lien) => A.push({niv, titre, detail, pour, lien});
+  const aidesN = voitAides() ? aidesVisibles().filter(x=>x.statut==="Nouvelle") : [];
+  if (aidesN.length) add("warn", `${aidesN.length} demande(s) d'aide d'étudiant(s) sans réponse`, aidesN.slice(0,3).map(x=>`${x.nom} : ${x.sujet}`).join(" · "), ["pedagogie","tuteur","tuteurs","formation","accompagnement","president"], role()==="tuteur" ? "#t-aides" : "#aides");
   const E = etatSuivi(), X = etatAccomp();
   if (E.sem && E.retard) add("bad", `${E.retard} rapport(s) hebdomadaire(s) non soumis`, `${semLib(E.sem)} : ${E.lignes.filter(l=>l.st==="Non soumis").map(l=>l.t.nom).join(", ")}`, ["tuteurs","secretaire","president"], "#suivi");
   if (E.enAttente) add("warn", `${E.enAttente} rapport(s) en attente de validation`, "À examiner par le Responsable des Tuteurs", ["tuteurs","president"], "#suivi");
@@ -4422,6 +4556,7 @@ function abonnerProgramme(){
   if (has("tuteurs","accompagnement","secretaire","formation")) sub("pointages_tutorat","pointagesTut", s => { S.pointagesTut = rows(s); });
   else if (tousMesRoles().includes("tuteur")) sub("pointages_tutorat","pointagesTut", s => { S.pointagesTut = rows(s); }, db.collection("pointages_tutorat").where("tuteurs","array-contains",S.email));
   if (has("encaissement","tresorerie","caisse")) sub("tshirts","tshirts", s => { S.tshirts = rows(s); });
+  if (voitAides()){ sub("demandes_aide","aides", s => { S.aides = rows(s); }); sub("aca_comprehension","comp", s => { S.comp = rows(s); }); }
   if (has("secretaire","accompagnement")) sub("pointages_communaute","pointagesCom", s => { S.pointagesCom = rows(s); });
   else sub("pointages_communaute","pointagesCom", s => { S.pointagesCom = rows(s); }, db.collection("pointages_communaute").where("intervenants","array-contains",S.email));
 }
