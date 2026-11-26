@@ -1,0 +1,222 @@
+/* =====================================================================
+   CVPB · Design « Nuit violette » — commun à CVPB Manager et CVPB Académie
+   Verre lumineux, ciel étoilé, anneau CVPB lumineux, cartes en relief 3D,
+   menu animé, logo 3D au démarrage, mode guide (explication de chaque écran).
+   Actif en mode sombre (par défaut) ; le mode clair garde l'ancien style.
+   ===================================================================== */
+:root{
+  --n-bg0:#05030f; --n-bg1:#0b0620; --n-bg2:#170b3b;
+  --n-v1:#8B5CF6; --n-v2:#A78BFA; --n-v3:#6D28D9; --n-vd:#3C1776;
+  --n-g1:#34D399; --n-g2:#22C55E; --n-cy:#67E8F9;
+  --n-glass:rgba(255,255,255,.055); --n-glass2:rgba(255,255,255,.09);
+  --n-stroke:rgba(196,170,255,.20); --n-stroke2:rgba(196,170,255,.36);
+  --n-text:#F3EEFF; --n-mute:#A9A1C8; --n-glow:0 0 24px rgba(139,92,246,.45);
+  --n-r:22px; --n-ease:cubic-bezier(.2,.8,.2,1);
+}
+
+/* ---------- Fond : ciel de nuit, aurores, anneau CVPB lumineux ---------- */
+#nuitBg{position:fixed;inset:0;z-index:-1;pointer-events:none;overflow:hidden;display:none;
+  background:radial-gradient(1200px 700px at 80% -10%,#2a1260 0%,transparent 60%),radial-gradient(900px 600px at -10% 110%,#0f3b2c 0%,transparent 55%),linear-gradient(180deg,var(--n-bg1),var(--n-bg0) 70%)}
+html.nuit-on #nuitBg{display:block}
+#nuitBg canvas{position:absolute;inset:0;width:100%;height:100%}
+#nuitBg .aur{position:absolute;border-radius:50%;filter:blur(70px);opacity:.55;mix-blend-mode:screen;animation:nAur 22s ease-in-out infinite alternate}
+#nuitBg .a1{width:55vw;height:55vw;left:-15vw;top:-10vw;background:radial-gradient(circle,#6D28D9 0,transparent 65%)}
+#nuitBg .a2{width:45vw;height:45vw;right:-12vw;top:25vh;background:radial-gradient(circle,#0E9F6E 0,transparent 65%);animation-duration:28s;opacity:.35}
+#nuitBg .a3{width:60vw;height:40vw;left:20vw;bottom:-20vw;background:radial-gradient(circle,#3B1C8C 0,transparent 65%);animation-duration:34s}
+@keyframes nAur{0%{transform:translate(0,0) scale(1)}50%{transform:translate(6vw,4vh) scale(1.12)}100%{transform:translate(-4vw,-3vh) scale(.95)}}
+#nuitBg .orb{position:absolute;right:-70px;top:-70px;width:340px;height:340px;border-radius:50%;
+  background:conic-gradient(from 0deg,#8B5CF6,#22C55E,#67E8F9,#8B5CF6);-webkit-mask:radial-gradient(circle,transparent 58%,#000 59%,#000 66%,transparent 67%);mask:radial-gradient(circle,transparent 58%,#000 59%,#000 66%,transparent 67%);
+  filter:drop-shadow(0 0 30px rgba(139,92,246,.8)) blur(.3px);opacity:.75;animation:nSpin 40s linear infinite}
+#nuitBg .orb2{position:absolute;right:-30px;top:-30px;width:260px;height:260px;border-radius:50%;background:radial-gradient(circle at 40% 40%,rgba(167,139,250,.35),rgba(60,23,118,.05) 60%,transparent 70%);filter:blur(8px)}
+@keyframes nSpin{to{transform:rotate(360deg)}}
+@media (max-width:700px){#nuitBg .orb{width:220px;height:220px;right:-80px;top:-60px;opacity:.55}#nuitBg .orb2{display:none}}
+
+/* ---------- Base ---------- */
+html.nuit-on body{background:transparent!important;color:var(--n-text)}
+html.nuit-on ::selection{background:rgba(139,92,246,.45)}
+html.nuit-on ::-webkit-scrollbar{width:10px;height:10px}
+html.nuit-on ::-webkit-scrollbar-thumb{background:rgba(167,139,250,.25);border-radius:10px;border:3px solid transparent;background-clip:padding-box}
+
+/* Verre lumineux : cartes, indicateurs, tuiles */
+html.nuit-on .card,html.nuit-on .kpi,html.nuit-on .tile,html.nuit-on .promo,html.nuit-on .modal,html.nuit-on .sheet,
+html.nuit-on .tbl-wrap,html.nuit-on .tablewrap,html.nuit-on .list-i.card,html.nuit-on .qa,html.nuit-on .stc,html.nuit-on .ring,html.nuit-on .evt,html.nuit-on .fp{
+  background:linear-gradient(150deg,rgba(255,255,255,.085),rgba(255,255,255,.025))!important;
+  border:1px solid var(--n-stroke)!important;border-radius:var(--n-r);
+  box-shadow:0 12px 40px rgba(0,0,0,.38),inset 0 1px 0 rgba(255,255,255,.08)!important;
+  -webkit-backdrop-filter:blur(16px) saturate(1.3);backdrop-filter:blur(16px) saturate(1.3);
+  transition:transform .45s var(--n-ease),box-shadow .35s,border-color .35s}
+html.nuit-on .kpi:hover,html.nuit-on .tile:hover,html.nuit-on .promo:hover,html.nuit-on .card:hover{border-color:var(--n-stroke2)!important;box-shadow:0 16px 50px rgba(0,0,0,.45),0 0 0 1px rgba(167,139,250,.15),0 0 30px rgba(139,92,246,.22),inset 0 1px 0 rgba(255,255,255,.12)!important}
+html.nuit-on .n3d{transform-style:preserve-3d;will-change:transform}
+html.nuit-on .n3d::after{content:"";position:absolute;inset:0;border-radius:inherit;pointer-events:none;
+  background:radial-gradient(260px circle at var(--mx,50%) var(--my,0%),rgba(255,255,255,.12),transparent 45%);opacity:var(--mo,0);transition:opacity .3s}
+html.nuit-on .kpi,html.nuit-on .tile,html.nuit-on .promo,html.nuit-on .card{position:relative}
+
+/* Textes */
+html.nuit-on h1,html.nuit-on h2,html.nuit-on h3{color:var(--n-text);letter-spacing:-.01em}
+html.nuit-on h2{text-shadow:0 0 24px rgba(139,92,246,.35)}
+html.nuit-on .muted,html.nuit-on .small.muted{color:var(--n-mute)!important}
+html.nuit-on .kpi .v,html.nuit-on .kpi b,html.nuit-on .hx-val{background:linear-gradient(90deg,#fff,#d9ccff);-webkit-background-clip:text;background-clip:text;-webkit-text-fill-color:transparent}
+
+/* Boutons */
+html.nuit-on .btn.primary,html.nuit-on .btn-p,html.nuit-on .btn.vert,html.nuit-on .btn-g{border:0!important;color:#fff!important;border-radius:999px!important;
+  background:linear-gradient(135deg,#9F7AEA,#6D28D9)!important;box-shadow:0 8px 24px rgba(109,40,217,.45),inset 0 1px 0 rgba(255,255,255,.25)!important;transition:transform .2s,box-shadow .2s}
+html.nuit-on .btn.vert,html.nuit-on .btn-g{background:linear-gradient(135deg,#34D399,#059669)!important;box-shadow:0 8px 24px rgba(5,150,105,.4),inset 0 1px 0 rgba(255,255,255,.25)!important}
+html.nuit-on .btn.primary:hover,html.nuit-on .btn-p:hover,html.nuit-on .btn.vert:hover,html.nuit-on .btn-g:hover{transform:translateY(-2px);box-shadow:0 12px 30px rgba(109,40,217,.6)!important}
+html.nuit-on .btn,html.nuit-on .btn-o,html.nuit-on .icon-btn,html.nuit-on .bell{border-radius:999px}
+html.nuit-on .btn:not(.primary):not(.vert):not(.danger),html.nuit-on .btn-o{background:rgba(255,255,255,.06)!important;border:1px solid var(--n-stroke)!important;color:var(--n-text)!important}
+html.nuit-on input,html.nuit-on select,html.nuit-on textarea,html.nuit-on .inp{background:rgba(10,6,28,.55)!important;border:1px solid var(--n-stroke)!important;color:var(--n-text)!important;border-radius:14px!important}
+html.nuit-on input:focus,html.nuit-on select:focus,html.nuit-on textarea:focus,html.nuit-on .inp:focus{outline:none;border-color:var(--n-v2)!important;box-shadow:0 0 0 3px rgba(139,92,246,.25),var(--n-glow)!important}
+html.nuit-on table{background:transparent!important}
+html.nuit-on th{background:rgba(139,92,246,.10)!important;color:var(--n-mute)!important}
+html.nuit-on td,html.nuit-on th{border-color:rgba(196,170,255,.10)!important}
+html.nuit-on tr:hover td{background:rgba(139,92,246,.07)}
+
+/* Fenêtres (modales / feuilles) */
+html.nuit-on #modal,html.nuit-on .overlay{background:rgba(5,3,15,.55)!important;-webkit-backdrop-filter:blur(6px);backdrop-filter:blur(6px)}
+html.nuit-on .modal,html.nuit-on .sheet{background:linear-gradient(160deg,rgba(32,18,70,.92),rgba(12,8,30,.94))!important;animation:nPop .45s var(--n-ease)}
+@keyframes nPop{from{opacity:0;transform:translateY(24px) scale(.97) rotateX(8deg)}to{opacity:1;transform:none}}
+
+/* Entrée animée des contenus (relancée à chaque écran) */
+html.nuit-on .n-enter > *{animation:nUp .6s var(--n-ease) backwards}
+html.nuit-on .n-enter > *:nth-child(2){animation-delay:.05s}html.nuit-on .n-enter > *:nth-child(3){animation-delay:.1s}
+html.nuit-on .n-enter > *:nth-child(4){animation-delay:.15s}html.nuit-on .n-enter > *:nth-child(5){animation-delay:.2s}
+html.nuit-on .n-enter > *:nth-child(6){animation-delay:.25s}html.nuit-on .n-enter > *:nth-child(n+7){animation-delay:.3s}
+@keyframes nUp{from{opacity:0;transform:translateY(18px) perspective(900px) rotateX(6deg)}to{opacity:1;transform:none}}
+
+/* =========================== CVPB ACADÉMIE =========================== */
+html.nuit-on.nuit-aca #side{background:linear-gradient(180deg,rgba(24,12,56,.82),rgba(8,5,22,.9))!important;border-right:1px solid var(--n-stroke)!important;-webkit-backdrop-filter:blur(18px);backdrop-filter:blur(18px)}
+html.nuit-on.nuit-aca .side-head img{box-shadow:0 0 0 2px rgba(167,139,250,.5),0 0 22px rgba(139,92,246,.6);animation:nBreath 4s ease-in-out infinite}
+@keyframes nBreath{50%{box-shadow:0 0 0 2px rgba(52,211,153,.55),0 0 30px rgba(52,211,153,.5)}}
+html.nuit-on.nuit-aca .nav-a{border-radius:14px;transition:background .25s,transform .25s,color .25s;animation:nSlide .5s var(--n-ease) backwards}
+html.nuit-on.nuit-aca .nav-a:hover{background:rgba(139,92,246,.14)!important;transform:translateX(4px);color:#fff}
+html.nuit-on.nuit-aca .nav-a.on{background:linear-gradient(90deg,rgba(139,92,246,.38),rgba(139,92,246,.06))!important;color:#fff!important;box-shadow:inset 0 0 0 1px rgba(167,139,250,.35),0 0 24px rgba(139,92,246,.25)}
+html.nuit-on.nuit-aca .nav-a.on::before{content:"";position:absolute;left:-10px;top:20%;bottom:20%;width:4px;border-radius:4px;background:linear-gradient(var(--n-v2),var(--n-g1));box-shadow:0 0 12px var(--n-v1)}
+@keyframes nSlide{from{opacity:0;transform:translateX(-16px)}to{opacity:1;transform:none}}
+html.nuit-on.nuit-aca #nav .nav-a:nth-child(1){animation-delay:.02s}html.nuit-on.nuit-aca #nav .nav-a:nth-child(2){animation-delay:.05s}html.nuit-on.nuit-aca #nav .nav-a:nth-child(3){animation-delay:.08s}html.nuit-on.nuit-aca #nav .nav-a:nth-child(4){animation-delay:.11s}html.nuit-on.nuit-aca #nav .nav-a:nth-child(5){animation-delay:.14s}html.nuit-on.nuit-aca #nav .nav-a:nth-child(6){animation-delay:.17s}html.nuit-on.nuit-aca #nav .nav-a:nth-child(n+7){animation-delay:.2s}
+html.nuit-on.nuit-aca #top{background:rgba(10,6,28,.55)!important;border-bottom:1px solid var(--n-stroke)!important;-webkit-backdrop-filter:blur(18px);backdrop-filter:blur(18px)}
+html.nuit-on.nuit-aca #main,html.nuit-on.nuit-aca #view,html.nuit-on.nuit-aca #app{background:transparent!important}
+html.nuit-on.nuit-aca .hero,html.nuit-on.nuit-aca .hx{background:radial-gradient(500px 260px at 85% 0%,rgba(139,92,246,.55),transparent 60%),linear-gradient(140deg,rgba(60,23,118,.85),rgba(20,10,50,.75))!important;border:1px solid var(--n-stroke)!important;border-radius:28px!important;box-shadow:0 20px 60px rgba(0,0,0,.45),inset 0 1px 0 rgba(255,255,255,.1)!important;overflow:hidden;position:relative}
+html.nuit-on.nuit-aca .hx::after{content:"";position:absolute;right:-60px;top:-60px;width:200px;height:200px;border-radius:50%;background:conic-gradient(#8B5CF6,#22C55E,#67E8F9,#8B5CF6);-webkit-mask:radial-gradient(circle,transparent 57%,#000 58%,#000 66%,transparent 67%);mask:radial-gradient(circle,transparent 57%,#000 58%,#000 66%,transparent 67%);filter:drop-shadow(0 0 18px #8B5CF6);opacity:.8;animation:nSpin 30s linear infinite;pointer-events:none}
+html.nuit-on.nuit-aca .tile span{box-shadow:0 0 22px rgba(139,92,246,.25)}
+/* Barre du bas flottante en verre + bulle lumineuse animée */
+@media (max-width:900px){
+  html.nuit-on.nuit-aca #bottom{left:12px!important;right:12px!important;bottom:calc(10px + env(safe-area-inset-bottom))!important;border-radius:30px!important;
+    background:rgba(16,9,40,.72)!important;border:1px solid var(--n-stroke)!important;-webkit-backdrop-filter:blur(22px) saturate(1.4);backdrop-filter:blur(22px) saturate(1.4);box-shadow:0 18px 50px rgba(0,0,0,.55),inset 0 1px 0 rgba(255,255,255,.08)!important}
+  html.nuit-on.nuit-aca #bottom a{color:var(--n-mute)!important;transition:color .3s}
+  html.nuit-on.nuit-aca #bottom a svg{transition:transform .45s var(--n-ease),filter .3s}
+  html.nuit-on.nuit-aca #bottom a.on{color:#fff!important}
+  html.nuit-on.nuit-aca #bottom a.on:not(.fab) svg{transform:translateY(-3px) scale(1.15);filter:drop-shadow(0 0 8px #A78BFA)}
+  html.nuit-on.nuit-aca #bottom a.on:not(.fab)::before{content:"";position:absolute;top:-2px;left:50%;width:46px;height:46px;margin-left:-23px;border-radius:50%;background:radial-gradient(circle,rgba(139,92,246,.55),rgba(139,92,246,0) 70%);animation:nBubble .5s var(--n-ease)}
+  html.nuit-on.nuit-aca #bottom a.fab i{border:0!important;background:radial-gradient(circle at 35% 30%,#C4B5FD,#7C3AED 55%,#4C1D95)!important;box-shadow:0 0 0 6px rgba(139,92,246,.18),0 0 30px rgba(139,92,246,.8),0 10px 26px rgba(0,0,0,.5)!important;animation:nFab 3.5s ease-in-out infinite}
+  html.nuit-on.nuit-aca #view{padding-bottom:110px!important}
+}
+@keyframes nBubble{from{transform:scale(.2);opacity:0}to{transform:scale(1);opacity:1}}
+@keyframes nFab{50%{box-shadow:0 0 0 10px rgba(52,211,153,.12),0 0 38px rgba(52,211,153,.6),0 10px 26px rgba(0,0,0,.5)}}
+
+/* ============================ CVPB MANAGER ============================ */
+html.nuit-on.nuit-mgr #splash{display:none!important}
+html.nuit-on.nuit-mgr header.top{background:rgba(10,6,28,.55)!important;border-bottom:1px solid var(--n-stroke)!important;-webkit-backdrop-filter:blur(18px);backdrop-filter:blur(18px);box-shadow:none!important}
+html.nuit-on.nuit-mgr header.top::after{height:1px;background:linear-gradient(90deg,transparent,#A78BFA,#34D399,transparent);opacity:.8}
+html.nuit-on.nuit-mgr .brand img{box-shadow:0 0 0 2px rgba(167,139,250,.5),0 0 22px rgba(139,92,246,.6)!important;border-radius:50%;animation:nBreath 4s ease-in-out infinite}
+html.nuit-on.nuit-mgr nav.tabs{background:rgba(10,6,28,.45)!important;border-bottom:1px solid var(--n-stroke)!important;-webkit-backdrop-filter:blur(16px);backdrop-filter:blur(16px)}
+html.nuit-on.nuit-mgr nav.tabs a{border-radius:999px;transition:background .25s,color .25s,transform .25s;animation:nSlide .45s var(--n-ease) backwards}
+html.nuit-on.nuit-mgr nav.tabs a:hover{background:rgba(139,92,246,.14);transform:translateY(-1px)}
+html.nuit-on.nuit-mgr nav.tabs a[aria-current]{background:linear-gradient(135deg,rgba(139,92,246,.55),rgba(109,40,217,.35))!important;color:#fff!important;box-shadow:0 0 20px rgba(139,92,246,.45),inset 0 0 0 1px rgba(196,170,255,.35)}
+html.nuit-on.nuit-mgr main{background:transparent!important}
+html.nuit-on.nuit-mgr .hero{background:radial-gradient(500px 260px at 85% 0%,rgba(139,92,246,.5),transparent 60%),linear-gradient(140deg,rgba(60,23,118,.8),rgba(20,10,50,.7))!important;border:1px solid var(--n-stroke)!important;border-radius:28px!important;box-shadow:0 20px 60px rgba(0,0,0,.45)!important}
+html.nuit-on.nuit-mgr .banner,html.nuit-on.nuit-mgr .alert,html.nuit-on.nuit-mgr .quote{background:rgba(139,92,246,.08)!important;border:1px solid var(--n-stroke)!important;border-radius:16px}
+html.nuit-on.nuit-mgr .subtabs button[aria-pressed="true"],html.nuit-on.nuit-mgr .seg button[aria-pressed="true"]{background:linear-gradient(135deg,#9F7AEA,#6D28D9)!important;color:#fff!important;box-shadow:0 0 18px rgba(139,92,246,.45)}
+html.nuit-on.nuit-mgr .pill{border-radius:999px}
+html.nuit-on.nuit-mgr .bnav{border-radius:999px!important;background:rgba(16,9,40,.72)!important;border:1px solid var(--n-stroke)!important;-webkit-backdrop-filter:blur(22px) saturate(1.4);backdrop-filter:blur(22px) saturate(1.4);box-shadow:0 18px 50px rgba(0,0,0,.55)!important}
+html.nuit-on.nuit-mgr .bnav a,html.nuit-on.nuit-mgr .bnav > button:not(.fab){color:var(--n-mute)!important;position:relative;transition:color .3s}
+html.nuit-on.nuit-mgr .bnav a svg,html.nuit-on.nuit-mgr .bnav > button svg{transition:transform .45s var(--n-ease),filter .3s}
+html.nuit-on.nuit-mgr .bnav [aria-current]{color:#fff!important}
+html.nuit-on.nuit-mgr .bnav [aria-current]:not(.fab) svg{transform:translateY(-3px) scale(1.15);filter:drop-shadow(0 0 8px #A78BFA)}
+html.nuit-on.nuit-mgr .bnav [aria-current]:not(.fab)::before{content:"";position:absolute;top:-6px;left:50%;width:46px;height:46px;margin-left:-23px;border-radius:50%;background:radial-gradient(circle,rgba(139,92,246,.55),rgba(139,92,246,0) 70%);animation:nBubble .5s var(--n-ease);pointer-events:none}
+html.nuit-on.nuit-mgr .bnav .fab{background:radial-gradient(circle at 35% 30%,#C4B5FD,#7C3AED 55%,#4C1D95)!important;border:0!important;box-shadow:0 0 0 6px rgba(139,92,246,.18),0 0 30px rgba(139,92,246,.8)!important;animation:nFab 3.5s ease-in-out infinite;color:#fff!important}
+@media (max-width:899px){html.nuit-on.nuit-mgr main{padding-bottom:120px!important}}
+
+/* ======================= Écran de démarrage 3D ======================= */
+#nuitSplash{position:fixed;inset:0;z-index:100000;display:grid;place-items:center;overflow:hidden;
+  background:radial-gradient(900px 600px at 50% 30%,#2a1260 0%,#0b0620 55%,#05030f 100%);transition:opacity .7s ease,visibility .7s;perspective:1100px;cursor:pointer}
+#nuitSplash.out{opacity:0;visibility:hidden}
+#nuitSplash canvas{position:absolute;inset:0;width:100%;height:100%}
+#nuitSplash .stage{position:relative;display:grid;place-items:center;text-align:center}
+#nuitSplash .scene{position:relative;width:340px;height:220px;display:grid;place-items:center;perspective:900px}
+#nuitSplash .coin{position:relative;width:150px;height:150px;transform-style:preserve-3d;animation:nCoin 2.2s var(--n-ease) both,nFloat 4s ease-in-out 2.2s infinite}
+#nuitSplash .coin .edge{position:absolute;inset:-3px;border-radius:50%;background:linear-gradient(135deg,#C4B5FD,#6D28D9 45%,#22C55E);transform:translateZ(-6px)}
+#nuitSplash .halo{position:absolute;left:50%;top:50%;width:420px;height:420px;margin:-210px 0 0 -210px;border-radius:50%;background:radial-gradient(circle,rgba(139,92,246,.55) 0,rgba(52,211,153,.18) 35%,transparent 62%);animation:nHalo 3s ease-in-out infinite;pointer-events:none}
+@keyframes nHalo{50%{transform:scale(1.12);opacity:.8}}
+#nuitSplash .coin .face{position:absolute;inset:0;border-radius:50%;background:#fff center/82% no-repeat;transform:translateZ(1px);box-shadow:inset 0 0 0 3px rgba(255,255,255,.95);backface-visibility:hidden;-webkit-backface-visibility:hidden}
+#nuitSplash .coin .back{transform:rotateY(180deg) translateZ(8px);background:radial-gradient(circle at 35% 30%,#C4B5FD,#6D28D9 60%,#2a1260)}
+#nuitSplash .ring{position:absolute;left:50%;top:50%;border-radius:50%;border:2px solid transparent;background:none;transform-style:preserve-3d;pointer-events:none}
+#nuitSplash .r1{width:260px;height:260px;margin:-130px 0 0 -130px;border-color:rgba(167,139,250,.75) transparent rgba(52,211,153,.75) transparent;animation:nOrb1 3.2s linear infinite}
+#nuitSplash .r2{width:330px;height:330px;margin:-165px 0 0 -165px;border-color:transparent rgba(103,232,249,.55) transparent rgba(167,139,250,.55);animation:nOrb2 4.4s linear infinite}
+@keyframes nOrb1{from{transform:rotateX(72deg) rotateZ(0)}to{transform:rotateX(72deg) rotateZ(360deg)}}
+@keyframes nOrb2{from{transform:rotateX(64deg) rotateY(18deg) rotateZ(360deg)}to{transform:rotateX(64deg) rotateY(18deg) rotateZ(0)}}
+@keyframes nCoin{0%{transform:translateZ(-600px) rotateY(-540deg) rotateX(20deg);opacity:0}55%{opacity:1}100%{transform:translateZ(0) rotateY(0) rotateX(0);opacity:1}}
+@keyframes nFloat{50%{transform:translateY(-8px) rotateY(12deg)}}
+#nuitSplash h1{margin-top:10px;font:800 30px/1.1 Poppins,"Bricolage Grotesque",system-ui,sans-serif;color:#fff;letter-spacing:.02em}
+#nuitSplash h1{text-shadow:0 0 22px rgba(139,92,246,.9)}
+#nuitSplash h1 span{display:inline-block;opacity:0;transform:translateY(16px);animation:nLet .6s var(--n-ease) forwards}
+@keyframes nLet{to{opacity:1;transform:none}}
+#nuitSplash p{margin-top:10px;color:#CFC4F5;font:500 13px/1.4 Poppins,system-ui,sans-serif;letter-spacing:.12em;text-transform:uppercase;opacity:0;animation:nFade .8s ease 1.6s forwards}
+#nuitSplash .bar{width:160px;height:3px;border-radius:3px;margin:22px auto 0;background:rgba(255,255,255,.1);overflow:hidden;opacity:0;animation:nFade .4s ease 1.2s forwards}
+#nuitSplash .bar i{display:block;height:100%;width:40%;border-radius:3px;background:linear-gradient(90deg,#A78BFA,#34D399);animation:nLoad 1.2s ease-in-out infinite}
+@keyframes nLoad{from{transform:translateX(-100%)}to{transform:translateX(260%)}}
+@keyframes nFade{to{opacity:1}}
+#nuitSplash small{position:absolute;bottom:calc(18px + env(safe-area-inset-bottom));left:0;right:0;text-align:center;color:rgba(207,196,245,.5);font:500 11px Poppins,system-ui,sans-serif}
+
+/* ============================ Mode guide ============================ */
+#nGuideBtn{position:fixed;z-index:9000;left:14px;bottom:calc(96px + env(safe-area-inset-bottom));width:46px;height:46px;border-radius:50%;border:1px solid var(--n-stroke2);cursor:pointer;
+  background:radial-gradient(circle at 35% 30%,rgba(196,181,253,.95),rgba(109,40,217,.95) 60%,rgba(46,16,101,.95));color:#fff;font:800 20px/1 Poppins,system-ui,sans-serif;
+  box-shadow:0 0 0 5px rgba(139,92,246,.15),0 0 24px rgba(139,92,246,.6),0 8px 22px rgba(0,0,0,.4);display:grid;place-items:center;transition:transform .3s var(--n-ease)}
+#nGuideBtn:hover{transform:scale(1.08) rotate(-8deg)}
+#nGuideBtn.auto::after{content:"";position:absolute;top:2px;right:2px;width:11px;height:11px;border-radius:50%;background:#34D399;box-shadow:0 0 10px #34D399;border:2px solid #1b0f3d}
+@media (min-width:900px){#nGuideBtn{bottom:22px;left:auto;right:22px}}
+#nGuideMenu{position:fixed;z-index:9001;left:14px;bottom:calc(150px + env(safe-area-inset-bottom));width:min(300px,calc(100vw - 28px));padding:8px;border-radius:20px;
+  background:linear-gradient(160deg,rgba(32,18,70,.96),rgba(12,8,30,.97));border:1px solid var(--n-stroke2);box-shadow:0 20px 60px rgba(0,0,0,.6),0 0 30px rgba(139,92,246,.25);animation:nPop .35s var(--n-ease)}
+@media (min-width:900px){#nGuideMenu{left:auto;right:22px;bottom:78px}}
+#nGuideMenu button{display:flex;gap:10px;align-items:flex-start;width:100%;text-align:left;border:0;background:none;color:#F3EEFF;padding:10px 12px;border-radius:14px;cursor:pointer;font:500 13.5px/1.35 Poppins,system-ui,sans-serif}
+#nGuideMenu button:hover{background:rgba(139,92,246,.18)}
+#nGuideMenu button small{display:block;color:#A9A1C8;font-size:11.5px;margin-top:2px}
+#nGuideMenu .ic{font-size:18px;line-height:1.1}
+#nGuide{position:fixed;inset:0;z-index:99990;pointer-events:none}
+#nGuide .hole{position:fixed;border-radius:18px;box-shadow:0 0 0 9999px rgba(5,3,15,.72),0 0 0 2px #A78BFA,0 0 30px rgba(139,92,246,.8);transition:all .45s var(--n-ease);pointer-events:none}
+#nGuide .tip{position:fixed;pointer-events:auto;width:min(340px,calc(100vw - 24px));padding:16px 16px 12px;border-radius:20px;color:#F3EEFF;
+  background:linear-gradient(160deg,rgba(40,22,86,.97),rgba(14,9,34,.98));border:1px solid var(--n-stroke2);box-shadow:0 20px 60px rgba(0,0,0,.6),0 0 30px rgba(139,92,246,.3);
+  transition:top .45s var(--n-ease),left .45s var(--n-ease);font:400 13.5px/1.5 Poppins,system-ui,sans-serif;animation:nPop .4s var(--n-ease)}
+#nGuide .tip .k{font-size:10.5px;letter-spacing:.14em;text-transform:uppercase;color:#34D399;font-weight:700}
+#nGuide .tip h4{margin:4px 0 6px;font:700 16px/1.25 Poppins,system-ui,sans-serif;color:#fff}
+#nGuide .tip p{color:#DCD4F7}
+#nGuide .tip .nav{display:flex;gap:8px;align-items:center;margin-top:12px}
+#nGuide .tip .nav .sp{flex:1}
+#nGuide .tip .dots{display:flex;gap:4px}#nGuide .tip .dots i{width:6px;height:6px;border-radius:50%;background:rgba(255,255,255,.2)}#nGuide .tip .dots i.on{background:#A78BFA;box-shadow:0 0 8px #A78BFA}
+#nGuide .tip button{border:1px solid var(--n-stroke);background:rgba(255,255,255,.06);color:#fff;border-radius:999px;padding:7px 14px;cursor:pointer;font:600 12.5px Poppins,system-ui,sans-serif}
+#nGuide .tip button.go{background:linear-gradient(135deg,#9F7AEA,#6D28D9);border:0;box-shadow:0 6px 18px rgba(109,40,217,.5)}
+
+@media (prefers-reduced-motion:reduce){
+  html.nuit-on *,#nuitSplash *{animation-duration:.01ms!important;animation-iteration-count:1!important;transition-duration:.01ms!important}
+}
+@media print{#nuitBg,#nGuideBtn,#nGuideMenu,#nGuide,#nuitSplash{display:none!important}html.nuit-on body{background:#fff!important;color:#000}}
+
+/* ---------- Écrans de connexion ---------- */
+html.nuit-on.nuit-aca #login{background:transparent!important}
+html.nuit-on.nuit-aca .login-card{background:linear-gradient(160deg,rgba(40,22,86,.78),rgba(14,9,34,.84))!important;border:1px solid var(--n-stroke2);box-shadow:0 24px 70px rgba(0,0,0,.55),0 0 40px rgba(139,92,246,.25)!important;-webkit-backdrop-filter:blur(18px);backdrop-filter:blur(18px);animation:nPop .7s var(--n-ease)}
+html.nuit-on.nuit-aca .login-card > img{background:#fff;border-radius:20px;padding:10px 14px;box-shadow:0 0 0 2px rgba(167,139,250,.45),0 0 34px rgba(139,92,246,.45)}
+html.nuit-on.nuit-aca .login-card h1{color:#fff!important}
+html.nuit-on.nuit-aca .login-card p.sub,html.nuit-on.nuit-aca .login-foot{color:var(--n-mute)!important}
+html.nuit-on.nuit-aca .btn-google{background:#fff!important;color:#1B1530!important;border:0!important;border-radius:999px!important;box-shadow:0 10px 28px rgba(0,0,0,.35)}
+html.nuit-on.nuit-aca .demo-box{border-top-color:var(--n-stroke)!important}
+html.nuit-on.nuit-aca .demo-box h3{color:#FBBF24!important}
+html.nuit-on.nuit-aca .demo-grid button{background:rgba(255,255,255,.06)!important;border:1px solid var(--n-stroke)!important;color:var(--n-text)!important;border-radius:14px!important;transition:background .2s,transform .2s}
+html.nuit-on.nuit-aca .demo-grid button:hover{background:rgba(139,92,246,.22)!important;transform:translateY(-1px)}
+html.nuit-on.nuit-mgr .login,html.nuit-on.nuit-mgr .gate{background:linear-gradient(160deg,rgba(40,22,86,.78),rgba(14,9,34,.84))!important;border:1px solid var(--n-stroke2)!important;border-radius:26px!important;box-shadow:0 24px 70px rgba(0,0,0,.55),0 0 40px rgba(139,92,246,.25)!important;-webkit-backdrop-filter:blur(18px);backdrop-filter:blur(18px)}
+
+html.nuit-on.nuit-mgr .hero,html.nuit-on.nuit-mgr .hero h2,html.nuit-on.nuit-mgr body.tut .hero h2{color:#fff!important}
+html.nuit-on.nuit-mgr .hero p,html.nuit-on.nuit-mgr .hero small,html.nuit-on.nuit-mgr .hero .muted{color:rgba(232,224,255,.8)!important}
+html.nuit-on.nuit-mgr .hero .srch{background:rgba(255,255,255,.08)!important;border:1px solid var(--n-stroke)!important;color:#EDE7FF!important}
+html.nuit-on.nuit-mgr .hero .srch:hover{background:rgba(255,255,255,.14)!important}
+html.nuit-on.nuit-mgr .hero .wm{mix-blend-mode:screen;opacity:.16}
+html.nuit-on.nuit-mgr .bnav .fab{color:#fff!important}
+html.nuit-on.nuit-mgr .bnav .fab::before{border-color:rgba(167,139,250,.45)!important}

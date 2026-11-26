@@ -1,7 +1,7 @@
 /* Service worker CVPB Manager : fonctionne hors ligne et affiche les notifications. */
-const VERSION = "cvpb-v24";
+const VERSION = "cvpb-v25";
 const COQUILLE = ["./", "index.html", "app.js", "fb.js", "firebase-config.js", "manifest.webmanifest",
-  "icon-192.png", "icon-512.png", "maskable-192.png", "maskable-512.png", "apple-touch-icon.png", "favicon.png", "badge-96.png"];
+  "icon-192.png", "icon-512.png", "maskable-192.png", "maskable-512.png", "apple-touch-icon.png", "favicon.png", "badge-96.png", "nuit.css", "nuit.js"];
 
 self.addEventListener("install", e => { e.waitUntil(caches.open(VERSION).then(c => c.addAll(COQUILLE)).then(() => self.skipWaiting())); });
 self.addEventListener("activate", e => {
