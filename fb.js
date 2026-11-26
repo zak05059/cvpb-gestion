@@ -6,6 +6,9 @@ import { initializeFirestore, persistentLocalCache, persistentMultipleTabManager
 let app, auth, fs;
 const ERR = e => ({ code: e?.code==="permission-denied" ? "invalid_argument" : (e?.code==="unavailable"||e?.code==="failed-precondition") ? "unavailable" : (e?.code||"unavailable"), message: e?.message||"" });
 
+/* Aperçu « voir comme » : aucune écriture n'est envoyée au serveur */
+const lectureSeule = () => { try { return !!sessionStorage.getItem("cvpb-apercu"); } catch(e){ return false; } };
+const REFUS = () => Promise.reject({ code: "apercu", message: "Aperçu en lecture seule : aucune modification n'est enregistrée." });
 /* Une écriture hors ligne reste en attente côté serveur : on la considère enregistrée localement. */
 const ecrire = p => new Promise((res, rej) => {
   let fini = false;
@@ -26,9 +29,9 @@ function dref(ref){
   return {
     id: ref.id, path: ref.path,
     get: async () => { try { return snapDoc(await getDoc(ref)); } catch(e){ throw ERR(e); } },
-    set: d => ecrire(setDoc(ref, d)),
-    update: d => ecrire(updateDoc(ref, aplatir(d))),
-    delete: () => ecrire(deleteDoc(ref)),
+    set: d => lectureSeule() ? REFUS() : ecrire(setDoc(ref, d)),
+    update: d => lectureSeule() ? REFUS() : ecrire(updateDoc(ref, aplatir(d))),
+    delete: () => lectureSeule() ? REFUS() : ecrire(deleteDoc(ref)),
     onSnapshot: (n, e) => onSnapshot(ref, s => n(snapDoc(s)), x => e && e(ERR(x))),
     collection: p => qref(collection(ref, p), collection(ref, p))
   };
@@ -41,7 +44,7 @@ function qref(q, col){
     get: async () => { try { return snapQ(await getDocs(q)); } catch(e){ throw ERR(e); } },
     onSnapshot: (n, e) => onSnapshot(q, s => n(snapQ(s)), x => e && e(ERR(x)))
   };
-  if (col){ o.path = col.path; o.doc = id => dref(id ? doc(col, id) : doc(col)); o.add = async d => { const r = doc(col); await ecrire(setDoc(r, d)); return dref(r); }; }
+  if (col){ o.path = col.path; o.doc = id => dref(id ? doc(col, id) : doc(col)); o.add = async d => { if (lectureSeule()) return REFUS(); const r = doc(col); await ecrire(setDoc(r, d)); return dref(r); }; }
   return o;
 }
 
@@ -56,6 +59,7 @@ export function demarrer(config){
     doc: p => dref(doc(fs, p)),
     /* Écritures groupées (tout ou rien), 450 par lot */
     lots: async ops => {
+      if (lectureSeule()) return REFUS();
       for (let i = 0; i < ops.length; i += 450){
         const b = writeBatch(fs);
         for (const o of ops.slice(i, i+450)) b.set(doc(fs, o.path), o.data);
@@ -64,6 +68,7 @@ export function demarrer(config){
     },
     /* Numérotation séquentielle sûre (ENC-0001…) : nécessite une connexion */
     numeroter: async (colPath, prefixe, depart, fabrique) => {
+      if (lectureSeule()) return REFUS();
       if (!navigator.onLine) throw { code: "hors_ligne" };
       try {
         return await runTransaction(fs, async t => {

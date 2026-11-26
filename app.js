@@ -290,10 +290,13 @@ const S = {
   firstJournal:true,
   consignes:[], evaluations:[], messages:[], formations:[], affectations:[], rapportsHebdo:[], dossiers:[], rapportsResp:[], syntheses:[], sf:{sem:"", st:""}, df:{st:"ouverts"}, cf2:{st:"", q:""}, editRH:null, mf:{onglet:"attente", type:""}, classements:[], cf:{statut:"", dest:""}, evalP:"", classP:"", rp:{type:"", mois:"", a:"", b:"", tut:""}
 };
-const compte = () => S.moi;
+/* Aperçu « voir comme » (Président seulement, lecture seule) : l'état vit dans l'onglet (sessionStorage) */
+const APK = "cvpb-apercu";
+const apercu = () => { try { const a = JSON.parse(sessionStorage.getItem(APK)||"null"); return a && S.moi?.role==="president" && a.role && a.role!=="president" ? a : null; } catch(e){ return null; } };
+const compte = () => { const a = apercu(); if (a){ const t = a.em && S.comptes?.[a.em]; return t ? {...t, uid:t.uid||a.uid, _apercu:true} : {...S.moi, role:a.role, rolesSup:[], _apercu:true}; } return S.moi; };
 /* Une personne = un compte ; elle peut cumuler plusieurs rôles (rolesSup) et choisit l'espace affiché. */
 const rolesDe = c => c ? [c.role, ...(c.rolesSup||[])].filter((r,i,a)=>r && ROLES[r] && a.indexOf(r)===i) : [];
-const role = () => { const c = compte(); if (!c) return null; if (c.role==="president") return "president"; const a = localStorage.getItem("cvpb-espace"); return rolesDe(c).includes(a) ? a : c.role; };
+const role = () => { const c = compte(); if (!c) return null; const ap = apercu(); if (ap) return ap.role; if (c.role==="president") return "president"; const a = localStorage.getItem("cvpb-espace"); return rolesDe(c).includes(a) ? a : c.role; };
 const can = p => { const r = ROLES[role()]; return !!r && (r.perms.includes("*") || r.perms.includes(p)); };
 const P = () => S.C?.P || PARAM_DEFAUT;
 const etuBy = m => S.etudiants.find(s=>s.matricule===m);
@@ -512,6 +515,33 @@ function vCompte(){
   <div class="card"><h3>Apparence</h3><div class="subtabs" role="group" aria-label="Thème">${[["dark","Sombre"],["light","Clair"],["auto","Automatique"]].map(([k,l])=>`<button data-theme-set="${k}" aria-pressed="${(localStorage.getItem("cvpb-theme")||"dark")===k}">${l}</button>`).join("")}</div></div>
   <div class="card"><h3>Session</h3><p class="small muted">Vous restez connecté sur cet appareil. Déconnectez-vous si le téléphone est partagé.</p><div class="row">${btnDeco()}</div></div>`;
 }
+
+/* ---- Centre des interfaces : autre application, autre espace, ou « voir comme » (Président) ---- */
+const ROLE_ICO = {vicepresident:"🛡️", secretaire:"📜", encaissement:"💰", caisse:"🏦", formation:"🎓", tuteurs:"🧭", accompagnement:"🤝", pedagogie:"🧑‍🏫", tuteur:"📘", responsable:"🧩", membre:"👥", delegue:"🎯"};
+const accueilDe = r => r==="tuteur" ? "t-accueil" : "accueil";
+const quitterApercu = () => { try { sessionStorage.removeItem(APK); } catch(e){} location.hash = "accueil"; location.reload(); };
+const lancerApercu = (r, p) => { try { sessionStorage.setItem(APK, JSON.stringify({role:r, em:p?.em||null, uid:p?.uid||null})); } catch(e){} location.hash = accueilDe(r); location.reload(); };
+window.CVPB_APERCU = () => { const a = apercu(); if (!a) return null; const c = compte(); return {texte:`${(ROLES[a.role]?.l||a.role).replace(/ \(.*\)$/,"")}${a.em && c?.nom ? " · "+c.nom : ""}`, quitter:quitterApercu}; };
+window.CVPB_INTERFACES = async () => {
+  const reel = S.moi, cfg = {apps:[{nom:"CVPB Manager", sous:"Registre, caisse, suivi, tutorat, équipe", ico:"🗂️", ici:true},{nom:"CVPB Académie", sous:"Espace des étudiants et des formateurs", ico:"🎓", url:"../cvpb-academie/"}], groupes:[]};
+  if (!reel) return cfg;
+  if (reel.role!=="president"){
+    cfg.intro = "Ouvrez l'autre application CVPB avec le même compte UVCI, ou changez d'espace si vous cumulez plusieurs fonctions.";
+    const rs = rolesDe(reel);
+    if (rs.length>1) cfg.groupes.push({titre:"Mes espaces", note:"Vous cumulez plusieurs fonctions avec un seul compte.", items:rs.map(r=>({nom:ROLES[r]?.l||r, sous:"Espace de travail", ico:ROLE_ICO[r]||"◈", actif:role()===r, appliquer:()=>{ localStorage.setItem("cvpb-espace", r); location.hash = accueilDe(r); location.reload(); }}))});
+    return cfg;
+  }
+  cfg.intro = "Ouvrez l'autre application, ou voyez chaque espace exactement comme la personne le voit (lecture seule).";
+  const items = [{nom:"Ma vue · Présidence", sous:"Tous les écrans, avec droit de modification", ico:"👑", actif:!apercu(), appliquer:()=>quitterApercu()}];
+  const gens = r => Object.entries(S.comptes||{}).filter(([,c])=>c.actif!==false && rolesDe(c).includes(r)).map(([em,c])=>({em, uid:c.uid, nom:c.nom||em, sous:em})).sort((a,b)=>a.nom.localeCompare(b.nom,"fr"));
+  for (const r of ["vicepresident","secretaire","encaissement","caisse","formation","tuteurs","accompagnement","pedagogie","tuteur","responsable","membre","delegue"]){
+    items.push({nom:ROLES[r].l.replace(/ \(.*\)$/,""), sous:`${gens(r).length} personne(s)`, ico:ROLE_ICO[r]||"◈", actif:apercu()?.role===r, sansPersonne:true, choisir:async()=>gens(r), appliquer:p=>lancerApercu(r,p)});
+  }
+  cfg.groupes.push({titre:"Voir comme…", note:"Aperçu en lecture seule : rien ne peut être modifié, enregistré ni envoyé pendant l'aperçu.", items});
+  return cfg;
+};
+window.addEventListener("unhandledrejection", ev => { if (ev.reason?.code==="apercu"){ ev.preventDefault(); toast(ev.reason.message); } });
+
 function bindCompte(){
   bindInstall(); bindDeco();
   document.querySelectorAll("[data-espace]").forEach(b => b.onclick = () => { localStorage.setItem("cvpb-espace", b.dataset.espace); location.hash = b.dataset.espace==="tuteur" ? "t-accueil" : "accueil"; location.reload(); });
@@ -4621,7 +4651,7 @@ function abonner(){
         S.db.doc("users/"+em).set({nom:u.displayName||"Présidence", email:em, role:"president", actif:true, uid:u.uid, creeLe:nowISO(), derniereConnexion:nowISO()})
           .then(()=>{ presid = true; }).catch(()=>{ S.loaded.moi = true; queueRender(); });
         return; }
-      if (S.moi?.role === "president") presid = true;
+      if (S.moi?.role === "president") presid = true; else { try { sessionStorage.removeItem(APK); } catch(e){} }
       if (presid && S.moi) S.moi = {...S.moi, role:"president", actif:true};
       S.loaded.moi = true;
       if (premier && S.moi && S.moi.actif !== false){ premier = false; S.db.doc("users/"+em).update({uid:u.uid, derniereConnexion:nowISO()}).catch(()=>{}); }

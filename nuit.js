@@ -1,6 +1,6 @@
 /* =====================================================================
    CVPB · Design « Nuit violette » — script commun (CVPB Manager / CVPB Académie)
-   1. Logo 3D animé au démarrage   2. Ciel étoilé + aurores   3. Cartes en relief 3D
+   0. Touche numérique (grille, flux de données, boot, HUD)  1. Logo 3D animé au démarrage   2. Ciel étoilé + aurores   3. Cartes en relief 3D
    4. Entrée animée des écrans      5. Mode guide : explication de chaque écran
    Paramètres : <script src="nuit.js" data-app="aca|mgr" data-logo="…" data-nom="…" data-sous="…">
    ===================================================================== */
@@ -23,21 +23,37 @@
   /* ---------- 1. Écran de démarrage : logo 3D ---------- */
   var cleSplash = 'nuit_splash_' + APP, splash = null, t0 = Date.now();
   var dejaVu = false; try { dejaVu = sessionStorage.getItem(cleSplash) === '1'; } catch (e) { }
+  var LIGNES = APP === 'mgr' ? ['INIT CVPB_MANAGER_CORE', 'SYNCHRO DES REGISTRES', 'CANAL SÉCURISÉ UVCI'] : ['INIT CVPB_ACADÉMIE_CORE', 'CHARGEMENT DES FORMATIONS', 'CANAL SÉCURISÉ UVCI'];
+  var MONO = 'ui-monospace,SFMono-Regular,Menlo,Consolas,monospace';
+  /* Texte qui se « décode » lettre après lettre (effet terminal) */
+  function decoder(el, texte, delai, duree, fin) {
+    if (!el) return; var G = '01<>/{}#$%ABCDEF', t0 = null;
+    if (REDUIT) { el.textContent = texte; if (fin) fin(); return; }
+    setTimeout(function () {
+      (function pas(t) { if (!el.isConnected) return; if (t0 === null) t0 = t; var p = Math.min(1, (t - t0) / duree), n = Math.floor(p * texte.length), o = '';
+        for (var i = 0; i < texte.length; i++) o += i < n || texte[i] === ' ' ? texte[i] : G[Math.floor(Math.random() * G.length)];
+        el.textContent = o; if (p < 1) requestAnimationFrame(pas); else { el.textContent = texte; if (fin) fin(); } })(performance.now());
+    }, delai);
+  }
   function creerSplash() {
     if (dejaVu || !document.body) return;
     splash = document.createElement('div'); splash.id = 'nuitSplash'; splash.setAttribute('aria-hidden', 'true');
-    var couches = '<div class="edge"></div>';
-    var lettres = NOM.split('').map(function (c, i) { return '<span style="animation-delay:' + (0.9 + i * 0.045).toFixed(2) + 's">' + (c === ' ' ? '&nbsp;' : c.replace(/[<>&]/g, '')) + '</span>'; }).join('');
-    splash.innerHTML = '<canvas></canvas><div class="stage"><div class="scene"><div class="halo"></div><div class="ring r1"></div><div class="ring r2"></div><div class="coin"><div class="face back"></div>' + couches +
-      '<div class="face" style="background-image:url(' + LOGO + ')"></div></div></div><h1>' + lettres + '</h1><p>' + SOUS.replace(/[<>&]/g, '') + '</p><div class="bar"><i></i></div></div><small>Touchez pour passer</small>';
+    var pix = ''; for (var i = 0; i < 64; i++) pix += '<i style="animation-delay:' + (0.5 + Math.random() * 1.3).toFixed(2) + 's"></i>';
+    var boot = LIGNES.map(function (l, i) { return '<div style="animation-delay:' + (1.0 + i * 0.5).toFixed(2) + 's"><b>&gt;</b>' + l + '<em>OK</em></div>'; }).join('');
+    splash.innerHTML = '<canvas></canvas><div class="scanline"></div><div class="stage"><div class="scene"><div class="halo"></div><div class="ring r1"></div><div class="ring r2"></div><div class="coin"><div class="face back"></div><div class="edge"></div>' +
+      '<div class="face logo" style="background-image:url(' + LOGO + ')"></div><div class="pix">' + pix + '</div></div></div><h1></h1><p>' + SOUS.replace(/[<>&]/g, '') + '</p><div class="boot">' + boot + '</div><div class="bar"><i></i></div><div class="pct">0%</div></div><small>Touchez pour passer</small>';
     document.body.appendChild(splash);
-    etoiles(splash.querySelector('canvas'), true);
+    pluie(splash.querySelector('canvas'), true);
+    var h = splash.querySelector('h1'), nom = NOM.replace(/[<>&]/g, '');
+    decoder(h, nom.toUpperCase(), 700, 1100, function () { h.insertAdjacentHTML('beforeend', '<span class="cur"></span>'); });
+    var barre = splash.querySelector('.bar i'), pct = splash.querySelector('.pct'), d0 = performance.now();
+    (function prog(t) { if (!splash) return; var p = Math.min(1, (t - d0) / (REDUIT ? 600 : 2500)); p = 1 - Math.pow(1 - p, 2); barre.style.width = (p * 100) + '%'; pct.textContent = Math.round(p * 100) + '%'; if (p < 1) requestAnimationFrame(prog); })(d0);
     splash.addEventListener('click', fermerSplash);
     setTimeout(fermerSplash, REDUIT ? 900 : 5200);
   }
   function fermerSplash() {
     if (!splash || splash.classList.contains('out')) return;
-    var reste = Math.max(0, (REDUIT ? 700 : 2700) - (Date.now() - t0));
+    var reste = Math.max(0, (REDUIT ? 700 : 3000) - (Date.now() - t0));
     setTimeout(function () { if (!splash) return; splash.classList.add('out'); try { sessionStorage.setItem(cleSplash, '1'); } catch (e) { } setTimeout(function () { if (splash) { splash.remove(); splash = null; } }, 800); }, reste);
   }
 
@@ -68,12 +84,34 @@
     }
     taille(); addEventListener('resize', taille); requestAnimationFrame(dessin);
   }
+  /* ---------- Pluie de données (canvas) ---------- */
+  function pluie(cv, dense) {
+    if (!cv || !cv.getContext) return;
+    var ctx = cv.getContext('2d'), W, Hh, C = [], dpr = Math.min(window.devicePixelRatio || 1, 2), last = 0, G = '01ABCDEF<>/{}$#%+=', fs = dense ? 15 : 14;
+    function taille() {
+      W = cv.clientWidth || innerWidth; Hh = cv.clientHeight || innerHeight; cv.width = W * dpr; cv.height = Hh * dpr; ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+      var n = Math.max(6, Math.floor(W / (fs * (dense ? 1.6 : 3.4)))); C = [];
+      for (var i = 0; i < n; i++) C.push({ x: (i + .5) * (W / n), y: -Math.random() * Hh, v: (.6 + Math.random()) * (dense ? 1.5 : 1), l: 7 + Math.floor(Math.random() * 9), c: Math.random() < .35 ? '57,255,138' : '167,139,250' });
+    }
+    function dessin(t) {
+      if (!cv.isConnected) return;
+      if (!dense && (document.hidden || !H.classList.contains('nuit-on'))) { requestAnimationFrame(dessin); return; }
+      if (t - last < 55) { requestAnimationFrame(dessin); return; } last = t;
+      ctx.clearRect(0, 0, W, Hh); ctx.font = fs + 'px ' + MONO;
+      for (var i = 0; i < C.length; i++) { var c = C[i];
+        for (var k = 0; k < c.l; k++) { var y = c.y - k * fs; if (y < -fs || y > Hh + fs) continue;
+          ctx.fillStyle = 'rgba(' + c.c + ',' + (k === 0 ? .85 : (1 - k / c.l) * .38).toFixed(2) + ')'; ctx.fillText(G[Math.floor(Math.random() * G.length)], c.x, y); }
+        c.y += c.v * 5; if (c.y - c.l * fs > Hh) { c.y = -Math.random() * Hh * .4; c.v = (.6 + Math.random()) * (dense ? 1.5 : 1); } }
+      if (!REDUIT) requestAnimationFrame(dessin);
+    }
+    taille(); addEventListener('resize', taille); requestAnimationFrame(dessin);
+  }
   function creerFond() {
     if (document.getElementById('nuitBg')) return;
     var bg = document.createElement('div'); bg.id = 'nuitBg'; bg.setAttribute('aria-hidden', 'true');
-    bg.innerHTML = '<div class="aur a1"></div><div class="aur a2"></div><div class="aur a3"></div><canvas></canvas><div class="orb2"></div><div class="orb"></div>';
+    bg.innerHTML = '<div class="aur a1"></div><div class="aur a2"></div><div class="aur a3"></div><div class="dots"></div><div class="grid"></div><canvas></canvas><canvas class="rain"></canvas><div class="scan"></div><div class="orb2"></div><div class="orb"></div>';
     document.body.insertBefore(bg, document.body.firstChild);
-    etoiles(bg.querySelector('canvas'), false);
+    etoiles(bg.querySelector('canvas:not(.rain)'), false); pluie(bg.querySelector('canvas.rain'), false);
   }
 
   /* ---------- 3. Cartes en relief 3D (souris) et effet d'appui (tactile) ---------- */
@@ -103,6 +141,7 @@
       c.classList.remove('n-enter'); void c.offsetWidth; c.classList.add('n-enter');
       clearTimeout(c._nT); c._nT = setTimeout(function () { c.classList.remove('n-enter'); }, 1200);
       if (nouvelEcran) nouvelEcran = 0;
+      numerique(c);
     }).observe(c, { childList: true });
     nouvelEcran = Date.now();
   }
@@ -169,10 +208,10 @@
   };
   var GEN = APP === 'mgr' ? [
     ['#tabs', 'Sections', "Toutes les rubriques auxquelles votre rôle donne accès."], ['#bnav', 'Barre rapide', "Les écrans principaux, le bouton + (actions rapides) et le Menu complet."],
-    ['#search', 'Recherche', "Trouver un étudiant, une formation ou un rapport (Ctrl + K)."], ['#bell', 'Notifications', "Les nouveautés qui vous concernent."], ['#nGuideBtn', 'Mode guide', "Ce bouton explique l'écran affiché. En « Mode présentation », chaque écran s'explique tout seul."]
+    ['#search', 'Recherche', "Trouver un étudiant, une formation ou un rapport (Ctrl + K)."], ['#bell', 'Notifications', "Les nouveautés qui vous concernent."], ['#nSwBtn', 'Changer d\'interface', "Passer à l'autre application CVPB (Manager ↔ Académie) ou, pour le Président, voir l'espace d'un étudiant, d'un formateur ou d'un responsable en lecture seule."], ['#nGuideBtn', 'Mode guide', "Ce bouton explique l'écran affiché. En « Mode présentation », chaque écran s'explique tout seul."]
   ] : [
     ['#nav', 'Menu', "Toutes les rubriques de votre espace."], ['#bottom', 'Barre rapide', "Les écrans principaux et le Menu."], ['#btnBell', 'Notifications', "Activités, paiements, notes, aide…"],
-    ['[data-theme]', 'Mode nuit / clair', "Basculer entre le design nuit et le mode clair."], ['#nGuideBtn', 'Mode guide', "Ce bouton explique l'écran affiché. En « Mode présentation », chaque écran s'explique tout seul."]
+    ['[data-theme]', 'Mode nuit / clair', "Basculer entre le design nuit et le mode clair."], ['#nSwBtn', 'Changer d\'interface', "Passer à l'autre application CVPB (Manager ↔ Académie) ou, pour le Président, voir l'espace d'un étudiant, d'un formateur ou d'un responsable en lecture seule."], ['#nGuideBtn', 'Mode guide', "Ce bouton explique l'écran affiché. En « Mode présentation », chaque écran s'explique tout seul."]
   ];
   function pageId() {
     if (APP === 'mgr') { var h = location.hash.slice(1); return h || (document.body.classList.contains('tut') ? 't-accueil' : 'accueil'); }
@@ -223,7 +262,7 @@
     },
     fermer: function () { if (this.g) this.g.remove(); this.g = null; this.ouvert = false; document.removeEventListener('keydown', this.kb); removeEventListener('resize', this.rs); removeEventListener('scroll', this.rs, true); }
   };
-  window.NuitGuide = Guide;
+  window.NuitGuide = Guide; window.NuitSwitch = { ouvrir: function () { return ouvrirSw(); } };
   function bouton() {
     if (document.getElementById('nGuideBtn')) return;
     var b = document.createElement('button'); b.id = 'nGuideBtn'; b.type = 'button'; b.title = 'Mode guide : explication des écrans'; b.setAttribute('aria-label', 'Mode guide'); b.textContent = '?';
@@ -247,6 +286,80 @@
   function majBouton() {
     var pret = APP === 'mgr' ? !!document.querySelector('#tabs a') : !!(document.getElementById('app') && !document.getElementById('app').classList.contains('hidden'));
     var b = document.getElementById('nGuideBtn'); if (pret && !b) bouton(); else if (!pret && b) b.remove();
+    if (pret) { boutonSw(); bandeau(); } else { var q = document.getElementById('nSwBtn'); if (q) q.remove(); var z = document.getElementById('nApercu'); if (z) z.remove(); }
+  }
+
+  /* ---------- Touche numérique : titre décodé, chiffres qui défilent, barre de progression ---------- */
+  function numerique(c) {
+    var h = c.querySelector('h2'); if (h && !h.children.length && h.textContent.length < 60 && !h._d) { h._d = 1; var tx = h.textContent; decoder(h, tx, 60, 520); }
+    var L = c.querySelectorAll('.kpi .v, .kpi b, .hx-val');
+    for (var i = 0; i < L.length && i < 40; i++) compter(L[i]);
+  }
+  function compter(el) {
+    if (el._c || el.children.length || REDUIT) return; el._c = 1;
+    var tx = el.textContent, m = tx.match(/^(\s*)(\d{1,3}(?:[   ]\d{3})+|\d+)(.*)$/); if (!m) return;
+    var sep = (m[2].match(/[   ]/) || [''])[0], n = parseInt(m[2].replace(/[   ]/g, ''), 10); if (!isFinite(n) || n < 2 || n > 1e9) return;
+    var d0 = performance.now(), dur = 850;
+    (function pas(t) { if (!el.isConnected) return; var p = Math.min(1, (t - d0) / dur), v = Math.round(n * (1 - Math.pow(1 - p, 3))), s = String(v);
+      if (sep) s = s.replace(/\B(?=(\d{3})+(?!\d))/g, sep);
+      el.textContent = p < 1 ? m[1] + s + m[3] : tx; if (p < 1) requestAnimationFrame(pas); })(d0);
+  }
+  function barreHaut() {
+    var b = document.getElementById('nTop'); if (!b) { b = document.createElement('div'); b.id = 'nTop'; document.body.appendChild(b); }
+    b.classList.remove('go'); void b.offsetWidth; b.classList.add('go');
+  }
+  addEventListener('hashchange', barreHaut);
+
+  /* ---------- Centre des interfaces (changer d'application ou d'espace) + bandeau d'aperçu ---------- */
+  var escH = function (x) { return String(x == null ? '' : x).replace(/[&<>"']/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]; }); };
+  function fermerSw() { var e = document.getElementById('nSw'); if (e) e.remove(); }
+  async function ouvrirSw() {
+    fermerSw(); if (typeof window.CVPB_INTERFACES !== 'function') return;
+    var cfg; try { cfg = await window.CVPB_INTERFACES(); } catch (e) { cfg = { apps: [], groupes: [] }; } if (!cfg) return;
+    var w = document.createElement('div'); w.id = 'nSw'; document.body.appendChild(w);
+    var P = null; w.onclick = function (e) { if (e.target === w) fermerSw(); };
+    function entete(titre) { return '<header><h3>' + escH(titre) + '</h3><button type="button" data-x aria-label="Fermer">✕</button></header>'; }
+    function accueil() {
+      var h = '<div class="p">' + entete('⇄ CENTRE DES INTERFACES') + '<p class="note">' + escH(cfg.intro || 'Passez d\'une application à l\'autre ou changez d\'espace de travail.') + '</p>';
+      h += '<h4>// APPLICATIONS</h4><div class="grid2">' + (cfg.apps || []).map(function (a, i) {
+        return '<a class="it' + (a.ici ? ' on' : '') + '" ' + (a.ici ? 'data-ici' : 'href="' + escH(a.url) + '"') + ' style="animation-delay:' + (i * .06) + 's"><span class="ic">' + (a.ico || '▣') + '</span><span><b>' + escH(a.nom) + '</b><small>' + escH(a.sous || '') + '</small></span>' + (a.ici ? '<span class="tag">ICI</span>' : '') + '</a>'; }).join('') + '</div>';
+      (cfg.groupes || []).forEach(function (g, gi) {
+        h += '<h4>// ' + escH(g.titre).toUpperCase() + '</h4>' + (g.note ? '<p class="note">' + escH(g.note) + '</p>' : '') + '<div class="grid2">' + g.items.map(function (it, i) {
+          return '<button type="button" class="it' + (it.actif ? ' on' : '') + '" data-g="' + gi + '" data-i="' + i + '" style="animation-delay:' + (.1 + i * .035) + 's"><span class="ic">' + (it.ico || '◈') + '</span><span><b>' + escH(it.nom) + '</b><small>' + escH(it.sous || '') + '</small></span>' + (it.actif ? '<span class="tag">ACTIF</span>' : '') + '</button>'; }).join('') + '</div>'; });
+      w.innerHTML = h + '</div>'; lier();
+    }
+    function lier() {
+      w.querySelector('[data-x]').onclick = fermerSw;
+      var ici = w.querySelector('[data-ici]'); if (ici) ici.onclick = function (e) { e.preventDefault(); fermerSw(); };
+      w.querySelectorAll('[data-g]').forEach(function (b) { b.onclick = function () { choix(cfg.groupes[+b.dataset.g].items[+b.dataset.i]); }; });
+    }
+    async function choix(it) {
+      if (!it.choisir) { fermerSw(); it.appliquer && it.appliquer(null); return; }
+      w.innerHTML = '<div class="p">' + entete(it.nom.toUpperCase()) + '<div class="vide">Chargement…</div></div>'; w.querySelector('[data-x]').onclick = fermerSw;
+      var L = []; try { L = await it.choisir(); } catch (e) { L = []; }
+      function liste(q) {
+        q = (q || '').toLowerCase(); var F = L.filter(function (p) { return !q || (p.nom + ' ' + (p.sous || '')).toLowerCase().indexOf(q) >= 0; }).slice(0, 80);
+        return (it.sansPersonne ? '<button type="button" class="it" data-p="-1"><span class="ic">👁</span><span><b>Aperçu général</b><small>Sans personne précise : voir le menu et les écrans de ce rôle</small></span></button>' : '') +
+          (F.length ? F.map(function (p) { return '<button type="button" class="it" data-p="' + L.indexOf(p) + '"><span class="ic">' + escH((p.nom || '?').trim().charAt(0).toUpperCase()) + '</span><span><b>' + escH(p.nom) + '</b><small>' + escH(p.sous || '') + '</small></span></button>'; }).join('') : '<div class="vide">Aucune personne trouvée pour ce rôle.</div>');
+      }
+      w.innerHTML = '<div class="p">' + entete(it.nom.toUpperCase()) + '<button type="button" class="back" data-b>← RETOUR</button><p class="note">' + escH(it.note || 'Choisissez la personne dont vous voulez voir l\'interface. Lecture seule : rien ne sera modifié.') + '</p>' +
+        (L.length > 6 ? '<input class="rech" placeholder="Rechercher…" autocomplete="off">' : '') + '<div class="liste">' + liste('') + '</div></div>';
+      w.querySelector('[data-x]').onclick = fermerSw; w.querySelector('[data-b]').onclick = accueil;
+      function brancher() { w.querySelectorAll('[data-p]').forEach(function (b) { b.onclick = function () { var i = +b.dataset.p; fermerSw(); it.appliquer && it.appliquer(i < 0 ? null : L[i]); }; }); }
+      brancher(); var r = w.querySelector('.rech'); if (r) { r.oninput = function () { w.querySelector('.liste').innerHTML = liste(r.value); brancher(); }; r.focus(); }
+    }
+    accueil();
+  }
+  function boutonSw() {
+    var ok = typeof window.CVPB_INTERFACES === 'function', b = document.getElementById('nSwBtn');
+    if (ok && !b) { b = document.createElement('button'); b.id = 'nSwBtn'; b.type = 'button'; b.title = 'Changer d\'interface'; b.setAttribute('aria-label', 'Changer d\'interface'); b.textContent = '⇄'; b.onclick = function (e) { e.stopPropagation(); ouvrirSw(); }; document.body.appendChild(b); }
+    else if (!ok && b) b.remove();
+  }
+  function bandeau() {
+    var a = typeof window.CVPB_APERCU === 'function' ? window.CVPB_APERCU() : null, e = document.getElementById('nApercu');
+    H.classList.toggle('n-apercu', !!a);
+    if (a && !e) { e = document.createElement('div'); e.id = 'nApercu'; e.innerHTML = '<span class="eye">👁</span><span>' + escH(a.texte) + '<small>APERÇU · LECTURE SEULE</small></span><button type="button">Quitter</button>'; e.querySelector('button').onclick = function () { a.quitter && a.quitter(); }; document.body.appendChild(e); }
+    else if (!a && e) e.remove();
   }
 
   /* ---------- Démarrage ---------- */

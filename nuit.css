@@ -220,3 +220,139 @@ html.nuit-on.nuit-mgr .hero .srch:hover{background:rgba(255,255,255,.14)!importa
 html.nuit-on.nuit-mgr .hero .wm{mix-blend-mode:screen;opacity:.16}
 html.nuit-on.nuit-mgr .bnav .fab{color:#fff!important}
 html.nuit-on.nuit-mgr .bnav .fab::before{border-color:rgba(167,139,250,.45)!important}
+
+/* =====================================================================
+   COUCHE « NUMÉRIQUE » (v2) : grille néon, balayage, flux de données,
+   repères HUD sur les cartes, démarrage en séquence de boot,
+   centre des interfaces et bandeau d'aperçu.
+   ===================================================================== */
+:root{--n-mono:ui-monospace,"SF Mono","JetBrains Mono",Menlo,Consolas,"Courier New",monospace;--n-neon:#39FF8A;--n-neon2:#B794FF;--n-br:rgba(103,232,249,.55)}
+
+/* ---- Fond numérique : points, sol en grille, faisceau de balayage, pluie de données ---- */
+#nuitBg .dots{position:absolute;inset:0;background-image:radial-gradient(rgba(167,139,250,.22) 1px,transparent 1.3px);background-size:30px 30px;
+  -webkit-mask:radial-gradient(120% 90% at 50% 20%,#000 0,transparent 75%);mask:radial-gradient(120% 90% at 50% 20%,#000 0,transparent 75%);animation:nDots 18s linear infinite}
+@keyframes nDots{to{background-position:30px 30px}}
+#nuitBg .grid{position:absolute;left:-60%;right:-60%;bottom:-6%;height:58%;
+  background-image:linear-gradient(rgba(167,139,250,.36) 1px,transparent 1px),linear-gradient(90deg,rgba(57,255,138,.22) 1px,transparent 1px);background-size:60px 60px;
+  transform:perspective(560px) rotateX(66deg);transform-origin:50% 100%;
+  -webkit-mask:linear-gradient(to top,#000 0,rgba(0,0,0,.6) 40%,transparent 92%);mask:linear-gradient(to top,#000 0,rgba(0,0,0,.6) 40%,transparent 92%);animation:nGrid 4s linear infinite}
+@keyframes nGrid{to{background-position:0 60px,0 0}}
+#nuitBg .scan{position:absolute;left:0;right:0;top:0;height:160px;background:linear-gradient(to bottom,transparent,rgba(57,255,138,.05) 55%,rgba(139,92,246,.13) 92%,rgba(57,255,138,.35) 100%);animation:nScan 11s linear infinite;opacity:.9}
+@keyframes nScan{from{transform:translateY(-180px)}to{transform:translateY(105vh)}}
+#nuitBg canvas.rain{opacity:.55}
+@media (max-width:700px){#nuitBg .grid{height:44%}#nuitBg canvas.rain{opacity:.4}}
+
+/* ---- Barre de progression de navigation (haut de l'écran) ---- */
+#nTop{position:fixed;left:0;top:0;height:2px;width:100%;z-index:100001;pointer-events:none;transform:scaleX(0);transform-origin:0 50%;
+  background:linear-gradient(90deg,#8B5CF6,#39FF8A,#67E8F9);box-shadow:0 0 12px #39FF8A}
+#nTop.go{animation:nTopGo .8s cubic-bezier(.2,.8,.2,1) forwards}
+@keyframes nTopGo{0%{transform:scaleX(0);opacity:1}70%{transform:scaleX(1);opacity:1}100%{transform:scaleX(1);opacity:0}}
+
+/* ---- Cartes : repères d'angle façon écran HUD ---- */
+html.nuit-on .card,html.nuit-on .kpi,html.nuit-on .tile,html.nuit-on .promo{--br:rgba(103,232,249,.55);
+  background:
+    linear-gradient(var(--br),var(--br)) left 9px top 9px/11px 1.5px no-repeat,linear-gradient(var(--br),var(--br)) left 9px top 9px/1.5px 11px no-repeat,
+    linear-gradient(var(--br),var(--br)) right 9px top 9px/11px 1.5px no-repeat,linear-gradient(var(--br),var(--br)) right 9px top 9px/1.5px 11px no-repeat,
+    linear-gradient(var(--br),var(--br)) left 9px bottom 9px/11px 1.5px no-repeat,linear-gradient(var(--br),var(--br)) left 9px bottom 9px/1.5px 11px no-repeat,
+    linear-gradient(var(--br),var(--br)) right 9px bottom 9px/11px 1.5px no-repeat,linear-gradient(var(--br),var(--br)) right 9px bottom 9px/1.5px 11px no-repeat,
+    linear-gradient(150deg,rgba(255,255,255,.085),rgba(255,255,255,.025))!important}
+html.nuit-on .card:hover,html.nuit-on .kpi:hover,html.nuit-on .tile:hover,html.nuit-on .promo:hover{--br:rgba(57,255,138,.9)}
+html.nuit-on .kpi .v,html.nuit-on .kpi b,html.nuit-on .hx-val,html.nuit-on .num{font-family:var(--n-mono);font-variant-numeric:tabular-nums;letter-spacing:-.02em}
+html.nuit-on .kpi .v,html.nuit-on .kpi b{text-shadow:0 0 18px rgba(139,92,246,.45)}
+html.nuit-on .kpi .l,html.nuit-on .tile small{font-family:var(--n-mono);font-size:11px;letter-spacing:.04em;text-transform:uppercase;opacity:.85}
+
+/* ---- Titres : curseur de terminal, étiquettes de section ---- */
+html.nuit-on #main h2:first-child::after,html.nuit-on #view h2:first-child::after,html.nuit-on .n-enter > h2:first-child::after{
+  content:"";display:inline-block;width:.5em;height:.95em;margin-left:8px;vertical-align:-.1em;background:var(--n-neon);box-shadow:0 0 12px var(--n-neon);animation:nBlink 1.05s steps(2,start) infinite}
+@keyframes nBlink{to{opacity:0}}
+html.nuit-on .nav-sec{font-family:var(--n-mono);letter-spacing:.14em;color:var(--n-neon2)!important;opacity:.85}
+html.nuit-on .nav-sec::before{content:"// ";color:var(--n-neon)}
+
+/* ---- Boutons : reflet qui balaie, anneau néon au clavier ---- */
+html.nuit-on .btn.primary,html.nuit-on .btn-p,html.nuit-on .btn.vert,html.nuit-on .btn-g{position:relative;overflow:hidden;background-size:200% 100%!important}
+html.nuit-on .btn.primary::after,html.nuit-on .btn-p::after,html.nuit-on .btn.vert::after,html.nuit-on .btn-g::after{content:"";position:absolute;top:0;bottom:0;left:-60%;width:40%;
+  background:linear-gradient(100deg,transparent,rgba(255,255,255,.35),transparent);transform:skewX(-20deg);animation:nShine 4.5s ease-in-out infinite}
+@keyframes nShine{0%,60%{left:-60%}100%{left:130%}}
+html.nuit-on :focus-visible{outline:2px solid var(--n-neon)!important;outline-offset:2px;box-shadow:0 0 14px rgba(57,255,138,.5)}
+html.nuit-on .pill,html.nuit-on .badge{font-family:var(--n-mono);letter-spacing:.02em}
+
+/* ---- Tableaux : lignes qui s'éclairent comme un scanner ---- */
+html.nuit-on tr:hover td{background:linear-gradient(90deg,rgba(57,255,138,.09),rgba(139,92,246,.09))!important;box-shadow:inset 2px 0 0 var(--n-neon)}
+html.nuit-on th{font-family:var(--n-mono);font-size:11px;letter-spacing:.08em;text-transform:uppercase}
+
+/* ---- Menus : effet « glitch » discret au survol ---- */
+html.nuit-on.nuit-aca .nav-a:hover span,html.nuit-on.nuit-mgr nav.tabs a:hover{text-shadow:1.5px 0 rgba(255,45,149,.55),-1.5px 0 rgba(0,229,255,.55)}
+html.nuit-on.nuit-aca .nav-a.on::after{content:"";position:absolute;right:10px;top:50%;width:7px;height:7px;margin-top:-3.5px;border-radius:50%;background:var(--n-neon);box-shadow:0 0 12px var(--n-neon);animation:nBlink 1.4s ease-in-out infinite alternate}
+
+/* ---- Démarrage : séquence de boot ---- */
+#nuitSplash .scanline{position:absolute;left:0;right:0;height:3px;top:0;background:linear-gradient(90deg,transparent,#39FF8A,transparent);box-shadow:0 0 18px #39FF8A;animation:nSweep 2.4s ease-in-out infinite}
+@keyframes nSweep{0%{top:-4px;opacity:0}15%{opacity:1}85%{opacity:1}100%{top:100%;opacity:0}}
+#nuitSplash .coin .pix{position:absolute;inset:0;border-radius:50%;overflow:hidden;display:grid;grid-template-columns:repeat(8,1fr);transform:translateZ(3px)}
+#nuitSplash .coin .pix i{background:#0b0620;animation:nPix .35s steps(2) forwards;transform-origin:center}
+@keyframes nPix{to{opacity:0;transform:scale(.2)}}
+#nuitSplash .coin .logo{animation:nGlitch 2.3s steps(1) both}
+@keyframes nGlitch{0%,38%{filter:drop-shadow(5px 0 #ff2d95) drop-shadow(-5px 0 #00e5ff)}44%{filter:none}50%{filter:drop-shadow(-4px 0 #ff2d95) drop-shadow(4px 0 #00e5ff);transform:translateZ(1px) translateX(3px)}56%{filter:none;transform:translateZ(1px)}72%{filter:drop-shadow(2px 0 #ff2d95) drop-shadow(-2px 0 #00e5ff)}78%,100%{filter:none}}
+#nuitSplash h1{font-family:var(--n-mono)!important;letter-spacing:.06em;min-height:1.1em}
+#nuitSplash h1 .cur{display:inline-block;width:.5em;height:.9em;margin-left:4px;background:var(--n-neon);vertical-align:-.1em;animation:nBlink .7s steps(2,start) infinite}
+#nuitSplash .boot{margin:16px auto 0;width:min(340px,86vw);text-align:left;font:500 11.5px/1.7 var(--n-mono);color:#B8F5D3}
+#nuitSplash .boot div{opacity:0;animation:nFade .2s ease forwards;display:flex;gap:6px}
+#nuitSplash .boot b{color:var(--n-neon);font-weight:700}
+#nuitSplash .boot em{font-style:normal;margin-left:auto;color:var(--n-neon);text-shadow:0 0 8px var(--n-neon)}
+#nuitSplash .bar{width:min(340px,86vw);height:4px;margin-top:14px;opacity:1;animation:none}
+#nuitSplash .bar i{width:0;animation:none;background:linear-gradient(90deg,#8B5CF6,#39FF8A);box-shadow:0 0 14px #39FF8A}
+#nuitSplash .pct{margin-top:6px;font:700 12px var(--n-mono);color:var(--n-neon);letter-spacing:.14em}
+
+/* ---- Boutons flottants : interfaces + guide ---- */
+#nSwBtn{position:fixed;z-index:9000;left:14px;bottom:calc(150px + env(safe-area-inset-bottom));width:46px;height:46px;border-radius:50%;cursor:pointer;
+  border:1px solid rgba(57,255,138,.55);color:#39FF8A;font:700 19px/1 var(--n-mono);display:grid;place-items:center;
+  background:radial-gradient(circle at 35% 30%,rgba(57,255,138,.28),rgba(12,8,30,.92) 70%);box-shadow:0 8px 26px rgba(0,0,0,.5),0 0 22px rgba(57,255,138,.35);transition:transform .3s var(--n-ease)}
+#nSwBtn:hover{transform:scale(1.08) rotate(180deg)}
+#nSwBtn::after{content:"";position:absolute;top:3px;right:3px;width:9px;height:9px;border-radius:50%;background:#39FF8A;box-shadow:0 0 10px #39FF8A;animation:nBlink 1.3s ease-in-out infinite alternate}
+@media (min-width:900px){#nSwBtn{bottom:78px;left:auto;right:22px}#nGuideMenu{bottom:134px!important}}
+@media (max-width:899px){#nGuideMenu{bottom:calc(204px + env(safe-area-inset-bottom))!important}}
+html:not(.nuit-on) #nSwBtn{background:#fff;color:#3C1776;border-color:#3C1776;box-shadow:0 6px 20px rgba(60,23,118,.25)}
+
+/* ---- Centre des interfaces ---- */
+#nSw{position:fixed;inset:0;z-index:100002;display:grid;place-items:center;background:rgba(5,3,15,.66);-webkit-backdrop-filter:blur(8px);backdrop-filter:blur(8px);animation:nFadeIn .25s ease}
+@keyframes nFadeIn{from{opacity:0}to{opacity:1}}
+#nSw .p{width:min(720px,94vw);max-height:90vh;overflow:auto;border-radius:24px;padding:20px;color:#F3EEFF;font-family:Poppins,system-ui,sans-serif;position:relative;
+  background:linear-gradient(160deg,rgba(32,18,70,.97),rgba(9,6,24,.98));border:1px solid var(--n-stroke2);box-shadow:0 30px 90px rgba(0,0,0,.65),0 0 60px rgba(139,92,246,.25);animation:nPop .45s var(--n-ease)}
+#nSw .p::before{content:"";position:absolute;left:0;right:0;top:0;height:2px;background:linear-gradient(90deg,transparent,#39FF8A,#8B5CF6,transparent);animation:nSweepX 3s linear infinite}
+@keyframes nSweepX{from{transform:translateX(-100%)}to{transform:translateX(100%)}}
+#nSw header{display:flex;align-items:center;gap:10px;margin-bottom:6px}
+#nSw header h3{margin:0;font:700 14px var(--n-mono);letter-spacing:.14em;color:#39FF8A;flex:1}
+#nSw header button{border:1px solid var(--n-stroke);background:rgba(255,255,255,.06);color:#fff;border-radius:50%;width:34px;height:34px;cursor:pointer;font-size:16px}
+#nSw h4{margin:18px 0 8px;font:600 11px var(--n-mono);letter-spacing:.16em;color:var(--n-neon2)}
+#nSw .note{font-size:12.5px;color:var(--n-mute);margin:2px 0 6px;line-height:1.5}
+#nSw .grid2{display:grid;grid-template-columns:repeat(auto-fill,minmax(210px,1fr));gap:10px}
+#nSw .it{display:flex;gap:12px;align-items:center;text-align:left;padding:12px 14px;border-radius:16px;border:1px solid var(--n-stroke);background:rgba(255,255,255,.05);color:#fff;cursor:pointer;text-decoration:none;font:inherit;position:relative;overflow:hidden;
+  transition:transform .25s var(--n-ease),border-color .25s,background .25s,box-shadow .25s;animation:nUp .5s var(--n-ease) backwards}
+#nSw .it:hover{transform:translateY(-3px);border-color:rgba(57,255,138,.7);background:rgba(57,255,138,.07);box-shadow:0 0 24px rgba(57,255,138,.2)}
+#nSw .it .ic{width:42px;height:42px;border-radius:12px;display:grid;place-items:center;font-size:21px;background:linear-gradient(135deg,rgba(139,92,246,.45),rgba(52,211,153,.25));flex-shrink:0}
+#nSw .it b{display:block;font-size:14px}
+#nSw .it small{display:block;font-size:11.5px;color:var(--n-mute);line-height:1.35;margin-top:2px}
+#nSw .it.on{border-color:#39FF8A;background:rgba(57,255,138,.1);box-shadow:0 0 22px rgba(57,255,138,.25)}
+#nSw .it .tag{position:absolute;top:8px;right:10px;font:700 9.5px var(--n-mono);letter-spacing:.1em;color:#05030f;background:#39FF8A;border-radius:6px;padding:2px 6px}
+#nSw .rech{width:100%;margin:6px 0 10px;padding:11px 14px;border-radius:14px;border:1px solid var(--n-stroke);background:rgba(10,6,28,.6);color:#fff;font:500 14px var(--n-mono)}
+#nSw .rech:focus{outline:none;border-color:#39FF8A}
+#nSw .liste{display:grid;gap:8px}
+#nSw .back{border:0;background:none;color:var(--n-neon2);cursor:pointer;font:600 12px var(--n-mono);padding:4px 0;margin-bottom:4px}
+#nSw .vide{padding:18px;text-align:center;color:var(--n-mute);font-size:13px}
+
+/* ---- Bandeau d'aperçu ---- */
+#nApercu{position:fixed;z-index:9500;left:14px;right:14px;bottom:calc(86px + env(safe-area-inset-bottom));display:flex;gap:10px;align-items:center;padding:9px 12px;border-radius:16px;
+  background:linear-gradient(135deg,rgba(57,255,138,.18),rgba(139,92,246,.35));border:1px solid rgba(57,255,138,.7);color:#fff;font:600 12px/1.35 Poppins,system-ui,sans-serif;
+  -webkit-backdrop-filter:blur(14px);backdrop-filter:blur(14px);box-shadow:0 10px 30px rgba(0,0,0,.5),0 0 24px rgba(57,255,138,.3);animation:nUp .4s var(--n-ease)}
+#nApercu .eye{font-size:18px}
+#nApercu span{flex:1;min-width:0}
+#nApercu span small{display:block;font:500 10.5px var(--n-mono);color:#B8F5D3;letter-spacing:.06em}
+#nApercu button{border:0;border-radius:999px;padding:8px 12px;background:#39FF8A;color:#05230f;font:700 12px Poppins,system-ui,sans-serif;cursor:pointer;white-space:nowrap}
+html.n-apercu #nGuideBtn{bottom:calc(166px + env(safe-area-inset-bottom))}html.n-apercu #nSwBtn{bottom:calc(220px + env(safe-area-inset-bottom))}
+html.n-apercu #nGuideMenu{bottom:calc(274px + env(safe-area-inset-bottom))!important}
+@media (min-width:900px){html.n-apercu #nGuideBtn{bottom:22px}html.n-apercu #nSwBtn{bottom:78px}html.n-apercu #nGuideMenu{bottom:134px!important}#nApercu{left:50%;right:auto;bottom:20px;transform:translateX(-50%);width:min(560px,70vw)}}
+html.n-apercu body::before{content:"";position:fixed;inset:0;z-index:9400;pointer-events:none;border:2px solid rgba(57,255,138,.55);box-shadow:inset 0 0 40px rgba(57,255,138,.18)}
+@media print{#nSwBtn,#nApercu,#nTop{display:none!important}}
+@media (prefers-reduced-motion:reduce){#nuitBg .dots,#nuitBg .grid,#nuitBg .scan,#nuitSplash .scanline,html.nuit-on .btn::after{animation:none!important}}
+
+#nSw .it:has(.tag) b{padding-right:46px}
+@media (max-width:899px){#nSwBtn,#nGuideBtn{width:42px;height:42px;opacity:.92}}
